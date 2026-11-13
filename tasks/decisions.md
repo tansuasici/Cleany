@@ -60,3 +60,13 @@ Track important technical decisions here so they don't get lost between sessions
 - **Context**: A disk cleaner needs full-disk access; App Store sandboxing blocks it.
 - **Decision**: tauri-action publishes dmg (macOS), msi + NSIS exe (Windows), AppImage/deb/rpm (Linux) to GitHub Releases. No Mac App Store / MS Store.
 - **Consequences**: Signing/notarization handled in our release workflow; updater uses GitHub Releases.
+
+### ADR-0004: Click drills in; deletion is never a single click
+- **Date**: 2026-11-13
+- **Status**: accepted
+- **Context**: "Clicking an item" could mean drilling into it or deleting it. A one-click delete in a disk cleaner is a data-loss risk.
+- **Options**:
+  - A) Click drills in — Pros: safe, matches treemap/sunburst navigation / Cons: deletion needs extra steps
+  - B) Click deletes — Pros: fastest cleanup / Cons: accidental data loss, no undo for permanent delete
+- **Decision**: A. Single click on a folder drills in (breadcrumb to go back); on a file it selects and shows details. Deletion is select → basket → "Move to Trash" confirmation.
+- **Consequences**: M3 views implement drill-down + breadcrumb; M4 owns the selection basket and confirmation flow. Deletion engine stays a protected change.
