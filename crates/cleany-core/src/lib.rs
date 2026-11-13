@@ -1,6 +1,12 @@
 //! Cleany core: scan data model, aggregation and analysis.
 //!
-//! M0 placeholder. The arena tree and scanner land in M1 (see docs/PLAN.md §3).
+//! The arena tree lives in [`tree`]; the parallel scanner lands next in M1
+//! (see docs/PLAN.md §3).
+
+mod names;
+pub mod tree;
+
+pub use tree::{Children, EntryInfo, Node, NodeId, NodeKind, Tree, TreeBuilder, TreeError};
 
 use serde::Serialize;
 
