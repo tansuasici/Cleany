@@ -1,4 +1,9 @@
-//! Platform layer: OS detection now; fast scan paths, trash and reveal later (M1+).
+//! Platform layer: OS detection and raw entry metadata; fast scan paths,
+//! trash and reveal come later (M7+).
+
+pub mod meta;
+
+pub use meta::{EntryKind, EntryMeta, read_meta};
 
 use serde::Serialize;
 
