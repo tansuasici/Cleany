@@ -56,10 +56,9 @@ Cleany, macOS, Windows ve Linux'ta çalışan, diskteki alanın **nereye gittiğ
 - Dosya sistemi izleme (`notify`) ile canlı güncelleme, menü çubuğu/tepsi widget'ı, zamanlanmış rapor.
 - **`cleany` CLI** — aynı çekirdek crate'i kullanan terminal sürümü (OSS için çok değerli; CI'da test kolaylığı da sağlar). *Not: CLI'yi M1'de iç araç olarak zaten yazacağız.*
 
-### 2.4 Açık soru: "tıklayınca giden"
-İki anlam olabilir, ikisini de planladım:
-- (a) Tıklayınca **içine girme / Finder'da gösterme** → M2–M3.
-- (b) Tıklayınca **silme** → tek tıkla silme yapmıyoruz; tıkla → seç → "Çöpe taşı" onayı. Güvenlik için bu bilinçli bir tercih. Hangisini kastettiğini teyit edelim.
+### 2.4 Karar: tıklama = içine gir (ADR-0004)
+- Tek tık bir klasörün **içine girer** (drill‑down); breadcrumb ile geri dönülür. Dosyaya tıklamak onu seçer ve detayını gösterir.
+- Silme **asla** tek tıkla olmaz: seç → sepete ekle → "Çöpe taşı" onayı (M4).
 
 ---
 
@@ -188,9 +187,9 @@ Süreler tek geliştirici + Claude, yarı zamanlı tempo için kaba tahmindir.
 | MFT okuma karmaşıklığı | Gecikme | M7'ye ertelendi; genel yol her zaman çalışır |
 
 ## 11. Karar bekleyen sorular
-1. **Dil**: Sadece Rust önerisini onaylıyor musun?
-2. **"Tıklayınca giden"**: drill‑down/göster mi, silme mi?
-3. **Lisans**: MIT + Apache‑2.0 (Rust ekosistemi standardı, öneri) mi, GPL‑3 (kapalı fork'u engeller) mi?
+1. ~~**Dil**~~ → sadece Rust (ADR-0001).
+2. ~~**"Tıklayınca giden"**~~ → içine gir (ADR-0004).
+3. ~~**Lisans**~~ → MIT OR Apache‑2.0 (ADR-0002).
 4. **Frontend**: React + Tailwind + shadcn uygun mu?
 5. **Minimum OS**: macOS 12+, Windows 10+, Ubuntu 22.04+ öneriliyor.
 6. **Apple Developer hesabı** var mı (notarization için)?
