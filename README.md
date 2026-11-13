@@ -24,5 +24,8 @@ Sürümler [GitHub Releases](https://github.com/tansuasici/Cleany/releases) üze
 ## Teknoloji
 [Tauri 2](https://tauri.app) · Rust (tarama çekirdeği) · React + TypeScript + Vite (arayüz)
 
+## Katkı
+Katkılar memnuniyetle karşılanır: [CONTRIBUTING.md](CONTRIBUTING.md) · [Davranış kuralları](CODE_OF_CONDUCT.md) · [Güvenlik](SECURITY.md)
+
 ## Lisans
 Cleany, [MIT](LICENSE-MIT) veya [Apache-2.0](LICENSE-APACHE) lisanslarından biri altında, tercihinize göre kullanılabilir.
