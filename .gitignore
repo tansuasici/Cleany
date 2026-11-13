@@ -1,0 +1,29 @@
+# Rust
+/target/
+**/target/
+
+# Node / frontend
+node_modules/
+ui/dist/
+*.tsbuildinfo
+.vite/
+
+# Tauri
+src-tauri/gen/schemas/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Claude kit state
+.hook-state/
