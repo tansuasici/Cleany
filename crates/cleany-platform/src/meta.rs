@@ -65,10 +65,18 @@ impl EntryMeta {
     pub fn from_metadata(md: &Metadata) -> Self {
         let kind = EntryKind::from_file_type(md.file_type());
         let ids = raw_ids(md);
+        // Windows: a directory's NTFS index size is reported by
+        // `symlink_metadata` but not by `DirEntry::metadata` (find data), so
+        // directories count as 0 there to keep both sources consistent.
+        let (logical, allocated) = if cfg!(windows) && kind == EntryKind::Dir {
+            (0, 0)
+        } else {
+            (md.len(), ids.allocated)
+        };
         Self {
             kind,
-            logical: md.len(),
-            allocated: ids.allocated,
+            logical,
+            allocated,
             dev: ids.dev,
             file_id: ids.file_id,
             nlink: ids.nlink,
