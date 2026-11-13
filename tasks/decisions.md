@@ -70,3 +70,14 @@ Track important technical decisions here so they don't get lost between sessions
   - B) Click deletes — Pros: fastest cleanup / Cons: accidental data loss, no undo for permanent delete
 - **Decision**: A. Single click on a folder drills in (breadcrumb to go back); on a file it selects and shows details. Deletion is select → basket → "Move to Trash" confirmation.
 - **Consequences**: M3 views implement drill-down + breadcrumb; M4 owns the selection basket and confirmation flow. Deletion engine stays a protected change.
+
+### ADR-0005: cleany-core depends on cleany-platform; platform returns raw metadata
+- **Date**: 2026-11-14
+- **Status**: accepted
+- **Context**: The scanner (core) needs OS-specific metadata: allocated size, (dev, inode) / FileId, link count, reparse and cloud-placeholder flags. Shared types like `Size` and the arena tree live in core. If both crates depended on each other, that would be a cycle.
+- **Options**:
+  - A) core → platform; platform returns plain `u64`/flag fields (`EntryMeta`) — Pros: platform stays a thin syscall layer, core owns the model / Cons: platform can't use core types
+  - B) platform → core; platform builds `Size`/nodes itself — Pros: fewer conversions / Cons: OS code leaks into the model, harder to test core in isolation
+  - C) a trait in core implemented by platform — Pros: mockable / Cons: indirection with only one real implementation
+- **Decision**: A. `cleany-platform` exposes `EntryMeta` built from `std::fs::Metadata` (M1) and later the fast paths (M7). `cleany-core` converts it into tree entries.
+- **Consequences**: Platform must not depend on core. Windows-only helpers in M1 use safe wrapper crates (`winapi-util`, `filesize`), so `unsafe_code` stays denied. Revisit for the M7 MFT path.
