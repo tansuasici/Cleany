@@ -1,4 +1,8 @@
-import { invoke } from '@tauri-apps/api/core'
+import { Channel, invoke } from '@tauri-apps/api/core'
+
+// Hand-written mirror of the serialized types in src-tauri/src/lib.rs and
+// src-tauri/src/session.rs. The `ipc_ts_mentions_every_serialized_key` Rust
+// test fails when a key or tag here drifts from the backend.
 
 export interface AppInfo {
   name: string
@@ -8,3 +12,100 @@ export interface AppInfo {
 }
 
 export const getAppInfo = () => invoke<AppInfo>('app_info')
+
+/** Identifies one scan; a newer scan makes older ids stale. */
+export type ScanId = number
+
+export type NodeKind = 'file' | 'dir' | 'symlink' | 'other'
+
+/** One node of a finished tree. `id` is passed back to address it. */
+export interface NodeEntry {
+  id: number
+  name: string
+  kind: NodeKind
+  logical: number
+  allocated: number
+  files: number
+  /** Seconds since the Unix epoch. */
+  modified: number
+  hasChildren: boolean
+  hardlink: boolean
+  placeholder: boolean
+}
+
+export interface ChildrenPage {
+  total: number
+  offset: number
+  items: NodeEntry[]
+}
+
+export interface ScanStats {
+  dirs: number
+  files: number
+  symlinks: number
+  others: number
+  skippedMounts: number
+  hardlinks: number
+  placeholders: number
+  elapsedMs: number
+}
+
+export interface ScanIssue {
+  path: string
+  error: string
+}
+
+export interface ScanSummary {
+  scan: ScanId
+  root: NodeEntry
+  stats: ScanStats
+  /** The first 100 unreadable entries; `issueCount` has the total. */
+  issues: ScanIssue[]
+  issueCount: number
+}
+
+/** Streamed while a scan runs; `done`, `cancelled` or `failed` ends it. */
+export type ScanEvent =
+  | { event: 'progress'; dirs: number; files: number; allocated: number; elapsedMs: number }
+  | { event: 'done'; summary: ScanSummary }
+  | { event: 'cancelled' }
+  | { event: 'failed'; message: string }
+
+export type SortKey = 'allocated' | 'logical' | 'files' | 'name' | 'modified'
+export type SortOrder = 'asc' | 'desc'
+
+/** Rejection value of the scan commands. */
+export type SessionError =
+  | { kind: 'staleScan' }
+  | { kind: 'notReady' }
+  | { kind: 'unknownNode' }
+  | { kind: 'invalidPath' }
+  | { kind: 'spawn'; message: string }
+
+/** Largest page `getChildren` returns. */
+export const MAX_PAGE = 1000
+
+/** Starts scanning `path` (absolute), cancelling any running scan. */
+export function startScan(
+  path: string,
+  crossMounts: boolean,
+  onEvent: (event: ScanEvent) => void,
+): Promise<ScanId> {
+  const channel = new Channel<ScanEvent>()
+  channel.onmessage = onEvent
+  return invoke<ScanId>('start_scan', { path, crossMounts, onEvent: channel })
+}
+
+export const cancelScan = (scan: ScanId) => invoke<void>('cancel_scan', { scan })
+
+export const getChildren = (
+  scan: ScanId,
+  node: number,
+  sort: SortKey,
+  order: SortOrder,
+  offset: number,
+  limit: number,
+) => invoke<ChildrenPage>('get_children', { scan, node, sort, order, offset, limit })
+
+export const getAncestors = (scan: ScanId, node: number) =>
+  invoke<NodeEntry[]>('get_ancestors', { scan, node })
