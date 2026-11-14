@@ -21,7 +21,7 @@ Give the task you are actively working on an `h3` heading under **In Progress** 
 | 1 `feat(core): arena tree` | #8, #10 | `Tree`/`Node`/`NodeId`, ad havuzu, alt→üst toplama, `Size` (logical/allocated), ADR-0005 (crate yönü) | core: `thiserror` (workspace'te zaten var) |
 | 2 `feat(core): parallel scanner` | #9, #12, #14 | rayon havuzu, iptal, ≤10 Hz ilerleme, symlink/junction takip yok, mount sınırı, izin reddi listesi, OsString; seri referans yürüyücü + fikstürler; platform: std'den `EntryMeta` | core: `rayon`; dev: `tempfile` |
 | 3 `feat(cli): cleany scan` | #15, #16 | `cleany scan <yol> [--json] [--cross-mounts]` (argümanlar elle parse edilir), `du` karşılaştırma testi | cli: `serde_json` (workspace'te var) |
-| 4 `feat(platform): hardlinks + cloud` | #11, #13 | (dev,inode)/FileId tekilleştirme, iCloud/OneDrive yer tutucu algılama, Windows allocated boyut | Windows'a özel: aşağıdaki A/B seçeneğine göre |
+| 4 `feat(platform): hardlinks + cloud` ✅ PR açıldı | #11, #13 | (dev,inode)/FileId tekilleştirme, iCloud/OneDrive yer tutucu algılama, Windows allocated boyut | Windows'a özel: aşağıdaki A/B seçeneğine göre |
 | 5 `perf: bench` | #17 | criterion, sentetik 1M ağaç, tepe RSS ölçümü | dev: `criterion` |
 
 #### Tasarım kararları
@@ -67,7 +67,7 @@ _2026-11-14: Plan, bağımlılıklar ve Windows **A seçeneği** onaylandı._
 #### Not Now
 - getattrlistbulk / statx / MFT hızlı yolları (M7), Tauri komutları (M2).
 - `cleany scan` Ctrl-C ile iptal: sinyal yakalamak için yeni bağımlılık (`ctrlc`) ya da `unsafe` gerekir; M2'de UI iptali ile birlikte ele alınacak.
-- `~/Library` taraması 71 sn sürdü (%100 CPU, ağırlıklı sistem zamanı). Muhtemel sebep iCloud/FileProvider dizinleri; PR 4'teki bulut yer tutucu algılamasından sonra yeniden ölçülecek.
+- `~/Library` taraması 71 sn sürdü; PR 4'teki yer tutucu algılamasından sonra 26 sn (hâlâ ağırlıklı sistem zamanı, %282 CPU). Kalan maliyet PR 5'teki bench ile profillenecek.
 
 ---
 

@@ -11,5 +11,9 @@ authors.workspace = true
 [dependencies]
 serde.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+filesize = "0.2.0"
+winapi-util = "0.1.11"
+
 [lints]
 workspace = true
