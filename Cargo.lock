@@ -335,7 +335,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "cleany"
+name = "cleany-app"
 version = "0.1.0"
 dependencies = [
  "cleany-core",
@@ -352,6 +352,8 @@ version = "0.1.0"
 dependencies = [
  "cleany-core",
  "cleany-platform",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]

@@ -1,5 +1,5 @@
 [package]
-name = "cleany"
+name = "cleany-app"
 description = "Cleany desktop app (Tauri shell)"
 version.workspace = true
 edition.workspace = true
