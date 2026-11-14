@@ -7,6 +7,7 @@
 //! nothing from them.
 
 use std::fmt;
+#[cfg(any(target_os = "macos", test))]
 use std::io;
 
 use serde::Serialize;
@@ -16,10 +17,22 @@ use serde::Serialize;
 #[serde(rename_all = "camelCase")]
 pub enum DiskAccess {
     /// A protected file opened.
+    #[cfg_attr(
+        all(not(target_os = "macos"), not(test)),
+        expect(dead_code, reason = "only built on macOS")
+    )]
     Granted,
     /// macOS refused a protected file: some folders will be left out of a scan.
+    #[cfg_attr(
+        all(not(target_os = "macos"), not(test)),
+        expect(dead_code, reason = "only built on macOS")
+    )]
     Denied,
     /// No probe gave an answer (files missing, or another error).
+    #[cfg_attr(
+        all(not(target_os = "macos"), not(test)),
+        expect(dead_code, reason = "only built on macOS")
+    )]
     Unknown,
     /// Not macOS; there is nothing to grant.
     #[cfg_attr(
@@ -44,6 +57,10 @@ pub enum AccessError {
     )]
     Unsupported,
     /// `open` could not be run or failed.
+    #[cfg_attr(
+        all(not(target_os = "macos"), not(test)),
+        expect(dead_code, reason = "only built on macOS")
+    )]
     Launch {
         /// The OS error or exit status.
         message: String,
@@ -62,6 +79,7 @@ impl fmt::Display for AccessError {
 impl std::error::Error for AccessError {}
 
 /// What one probe's result says, if anything.
+#[cfg(any(target_os = "macos", test))]
 fn classify(result: io::Result<()>) -> Option<DiskAccess> {
     match result {
         Ok(()) => Some(DiskAccess::Granted),
@@ -72,6 +90,7 @@ fn classify(result: io::Result<()>) -> Option<DiskAccess> {
 }
 
 /// The first probe that gives an answer decides; with none, `Unknown`.
+#[cfg(any(target_os = "macos", test))]
 fn decide(probes: impl IntoIterator<Item = io::Result<()>>) -> DiskAccess {
     probes
         .into_iter()
