@@ -17,13 +17,22 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread;
 
 use cleany_core::{
-    CancelToken, Node, NodeFlags, NodeId, NodeKind, Progress, ScanError, ScanOptions, ScanResult,
-    Tree, scan,
+    CancelToken, CellTarget, Node, NodeFlags, NodeId, NodeKind, Progress, ScanError, ScanOptions,
+    ScanResult, Tree, TreemapOptions, scan, treemap,
 };
 use serde::{Deserialize, Serialize};
 
 /// Largest page [`Sessions::children`] returns, whatever `limit` asks for.
 pub const MAX_PAGE: u32 = 1_000;
+
+/// Most cells [`Sessions::treemap`] returns.
+pub const MAX_CELLS: usize = 5_000;
+
+/// Deepest treemap [`Sessions::treemap`] lays out, in levels below the node.
+pub const MAX_TREEMAP_DEPTH: u8 = 3;
+
+/// Largest treemap side, in CSS pixels; bigger requests are cut to this.
+pub const MAX_TREEMAP_SIDE: f32 = 16_384.0;
 
 /// How many unreadable entries a [`ScanSummary`] lists; the rest are counted.
 pub const MAX_ISSUES: usize = 100;
@@ -120,6 +129,48 @@ pub struct ChildrenPage {
     pub offset: u32,
     /// At most [`MAX_PAGE`] children.
     pub items: Vec<NodeEntry>,
+}
+
+/// One box of a treemap, in CSS pixels from the treemap's top left.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TreemapCell {
+    /// Node index, or `None` for merged small children.
+    pub id: Option<u32>,
+    /// The folder this cell lies in.
+    pub parent: u32,
+    /// 1 for the node's children, 2 for theirs, and so on.
+    pub depth: u8,
+    /// Left edge.
+    pub x: f32,
+    /// Top edge.
+    pub y: f32,
+    /// Width.
+    pub w: f32,
+    /// Height.
+    pub h: f32,
+    /// Allocated bytes.
+    pub allocated: u64,
+    /// Non-directory entries below (1 for a file, 0 for merged children).
+    pub files: u32,
+    /// Display name; empty for merged children.
+    pub name: String,
+    /// Entry kind; `None` for merged children.
+    pub kind: Option<EntryKind>,
+    /// Whether the node has children to drill into.
+    pub has_children: bool,
+    /// How many children were merged into this cell (0 for a node).
+    pub others: u32,
+}
+
+/// A node's treemap: the node itself and its cells, parents before children.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TreemapSlice {
+    /// The node laid out.
+    pub node: NodeEntry,
+    /// At most [`MAX_CELLS`] cells.
+    pub cells: Vec<TreemapCell>,
 }
 
 /// Counters of a finished scan.
@@ -450,6 +501,86 @@ impl Sessions {
         })
     }
 
+    /// `node`'s treemap in a `width` × `height` box (CSS pixels), `depth`
+    /// levels deep (1 to [`MAX_TREEMAP_DEPTH`]). Children smaller than
+    /// `min_area` px² (at least 1) are merged into one cell per folder. A box
+    /// with no area gives no cells; sides past [`MAX_TREEMAP_SIDE`] are cut.
+    ///
+    /// # Errors
+    /// [`SessionError::StaleScan`], [`SessionError::NotReady`] or
+    /// [`SessionError::UnknownNode`].
+    pub fn treemap(
+        &self,
+        id: ScanId,
+        node: u32,
+        width: f32,
+        height: f32,
+        depth: u8,
+        min_area: f32,
+    ) -> Result<TreemapSlice, SessionError> {
+        let mut state = lock(&self.state);
+        let tree = &state.finished_mut(id)?.tree;
+        let root = tree.node_id(node).ok_or(SessionError::UnknownNode)?;
+        let node_entry = entry(tree, root).ok_or(SessionError::UnknownNode)?;
+        let side = |v: f32| {
+            if v.is_finite() && v > 0.0 {
+                v.min(MAX_TREEMAP_SIDE)
+            } else {
+                0.0
+            }
+        };
+        let opts = TreemapOptions {
+            width: side(width),
+            height: side(height),
+            depth: depth.clamp(1, MAX_TREEMAP_DEPTH),
+            min_area: min_area.max(1.0),
+            max_cells: MAX_CELLS,
+            padding: 1.0,
+        };
+        let cells = treemap(tree, root, &opts)
+            .into_iter()
+            .filter_map(|c| {
+                let parent = u32::try_from(c.parent.index()).ok()?;
+                let base = TreemapCell {
+                    id: None,
+                    parent,
+                    depth: c.depth,
+                    x: c.rect.x,
+                    y: c.rect.y,
+                    w: c.rect.w,
+                    h: c.rect.h,
+                    allocated: c.allocated,
+                    files: 0,
+                    name: String::new(),
+                    kind: None,
+                    has_children: false,
+                    others: 0,
+                };
+                Some(match c.target {
+                    CellTarget::Node(n) => {
+                        let e = entry(tree, n)?;
+                        TreemapCell {
+                            id: Some(e.id),
+                            files: e.files,
+                            name: e.name,
+                            kind: Some(e.kind),
+                            has_children: e.has_children,
+                            ..base
+                        }
+                    }
+                    CellTarget::Others { count, .. } => TreemapCell {
+                        others: count,
+                        ..base
+                    },
+                })
+            })
+            .collect();
+        Ok(TreemapSlice {
+            node: node_entry,
+            cells,
+        })
+    }
+
     /// `node` and its ancestors, root first, for the breadcrumb.
     ///
     /// # Errors
@@ -609,8 +740,9 @@ fn millis(d: std::time::Duration) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        CancelToken, ChildrenPage, EntryKind, Finished, NodeEntry, ScanEvent, ScanId, ScanIssue,
-        ScanStats, ScanSummary, SessionError, Sessions, SortKey, SortOrder, State, lock,
+        CancelToken, ChildrenPage, EntryKind, Finished, MAX_TREEMAP_DEPTH, NodeEntry, ScanEvent,
+        ScanId, ScanIssue, ScanStats, ScanSummary, SessionError, Sessions, SortKey, SortOrder,
+        State, TreemapCell, TreemapSlice, lock,
     };
     use cleany_core::{EntryInfo, NodeFlags, NodeKind, ScanOptions, Size, Tree, TreeBuilder};
     use std::ffi::OsStr;
@@ -911,6 +1043,39 @@ mod tests {
         assert_eq!(rel, Err(SessionError::InvalidPath));
     }
 
+    #[test]
+    fn get_treemap_rejects_stale_scan_and_unknown_node() {
+        let (s, id) = done(small_tree());
+        assert_eq!(
+            s.treemap(ScanId(1), 0, 100.0, 100.0, 2, 24.0),
+            Err(SessionError::StaleScan)
+        );
+        assert_eq!(
+            s.treemap(id, 99, 100.0, 100.0, 2, 24.0),
+            Err(SessionError::UnknownNode)
+        );
+
+        let slice = s.treemap(id, 0, 100.0, 100.0, 9, 0.0).unwrap();
+        assert_eq!(slice.node.id, 0);
+        // b, C, a at level 1 and C's child x at level 2.
+        assert_eq!(slice.cells.len(), 4);
+        assert!(slice.cells.iter().all(|c| c.depth <= MAX_TREEMAP_DEPTH));
+        let x = slice.cells.iter().find(|c| c.name == "x").unwrap();
+        assert_eq!((x.depth, x.files, x.kind), (2, 1, Some(EntryKind::File)));
+        let c = slice.cells.iter().find(|c| c.name == "C").unwrap();
+        assert_eq!(x.parent, c.id.unwrap());
+        assert!(c.has_children);
+
+        // No area: no cells, but the node is still described.
+        for (w, h) in [(0.0, 100.0), (f32::NAN, 100.0), (100.0, -1.0)] {
+            assert!(s.treemap(id, 0, w, h, 2, 24.0).unwrap().cells.is_empty());
+        }
+        // Huge boxes are cut to the side cap.
+        let big = s.treemap(id, 0, 1e9, 1e9, 1, 24.0).unwrap();
+        let right = big.cells.iter().map(|c| c.x + c.w).fold(0.0, f32::max);
+        assert!(right <= super::MAX_TREEMAP_SIDE + 1.0);
+    }
+
     fn sample_entry() -> NodeEntry {
         NodeEntry {
             id: 3,
@@ -979,6 +1144,34 @@ mod tests {
             .collect();
         out.extend(errors.iter().map(|e| serde_json::to_value(e).unwrap()));
         out.push(serde_json::to_value(page).unwrap());
+        let cell = TreemapCell {
+            id: Some(3),
+            parent: 0,
+            depth: 1,
+            x: 0.0,
+            y: 0.0,
+            w: 1.0,
+            h: 1.0,
+            allocated: 2,
+            files: 4,
+            name: "C".to_owned(),
+            kind: Some(EntryKind::Dir),
+            has_children: true,
+            others: 0,
+        };
+        let others = TreemapCell {
+            id: None,
+            kind: None,
+            others: 5,
+            ..cell.clone()
+        };
+        out.push(
+            serde_json::to_value(TreemapSlice {
+                node: sample_entry(),
+                cells: vec![cell, others],
+            })
+            .unwrap(),
+        );
         for k in [EntryKind::File, EntryKind::Symlink, EntryKind::Other] {
             out.push(serde_json::to_value(k).unwrap());
         }

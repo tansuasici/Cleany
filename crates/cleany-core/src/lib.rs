@@ -1,11 +1,12 @@
 //! Cleany core: scan data model, aggregation and analysis.
 //!
-//! The arena tree lives in [`tree`] and the parallel scanner in [`scan`]
-//! (see docs/PLAN.md §3).
+//! The arena tree lives in [`tree`], the parallel scanner in [`scan`]
+//! (see docs/PLAN.md §3) and the treemap layout in [`mod@treemap`].
 
 mod names;
 pub mod scan;
 pub mod tree;
+pub mod treemap;
 
 pub use scan::{
     CancelToken, PROGRESS_INTERVAL, Progress, ScanError, ScanIssue, ScanOptions, ScanResult,
@@ -14,6 +15,7 @@ pub use scan::{
 pub use tree::{
     Children, EntryInfo, Node, NodeFlags, NodeId, NodeKind, Tree, TreeBuilder, TreeError,
 };
+pub use treemap::{Cell, CellTarget, Rect, TreemapOptions, treemap};
 
 use serde::Serialize;
 
