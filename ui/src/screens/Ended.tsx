@@ -12,17 +12,17 @@ export function EndedScreen({ screen }: Props) {
   const failed = screen.kind === 'failed'
 
   return (
-    <section aria-labelledby="ended-title" className="mx-auto w-full max-w-200 px-8 py-10">
+    <section aria-labelledby="ended-title" className="mx-auto w-full max-w-200 px-8 py-16">
       <h1 id="ended-title" className="text-title font-medium">
         {t(failed ? 'failed.title' : 'cancelled.title')}
       </h1>
-      <p className="mt-1 truncate font-mono text-meta text-ink-3" title={screen.target.path}>
-        {screen.target.path}
-      </p>
       {failed ? (
-        <p role="alert" className="mt-6 break-words rounded-control border-l-2 border-negative bg-card p-3 font-mono text-secondary text-ink">
+        <div role="alert" className="mt-6 flex flex-col gap-3">
+          <p className="text-ink-2">{t('failed.lead')}</p>
+          <p className="break-words rounded-control border-l-2 border-negative bg-card p-3 font-mono text-secondary text-ink">
           {screen.message}
-        </p>
+          </p>
+        </div>
       ) : (
         <p className="mt-6 text-ink-2">{t('cancelled.body')}</p>
       )}

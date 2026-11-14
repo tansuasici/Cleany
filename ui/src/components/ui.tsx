@@ -15,12 +15,6 @@ const iconProps = {
   'aria-hidden': true,
 }
 
-export const BackIcon = () => (
-  <svg {...iconProps}>
-    <path d="M10 3.5 5.5 8l4.5 4.5" />
-  </svg>
-)
-
 export const ChevronIcon = () => (
   <svg {...iconProps}>
     <path d="M6 3.5 10.5 8 6 12.5" />
@@ -59,33 +53,39 @@ export function Button({ variant = 'secondary', className = '', ...props }: Butt
   )
 }
 
-/** Signature: `name ········ size`, the leader sitting on the baseline. */
+/**
+ * Signature: `name ········ size`, the leader sitting on the baseline.
+ * `strong` is the subtotal line; `figure` sets the value as the screen's key
+ * figure (28/500), as the döküm total does.
+ */
 export function LeaderRow({
   name,
   value,
   strong = false,
+  figure = false,
   title,
 }: {
   name: ReactNode
   value: ReactNode
   strong?: boolean
+  figure?: boolean
   title?: string
 }) {
   return (
     // Spans only, so a row can sit inside a button.
     <span className={`flex w-full min-w-0 items-baseline gap-2 ${strong ? 'text-strong font-medium' : ''}`}>
       <span className="min-w-0 truncate" title={title}>
-        {name}
+        <bdi>{name}</bdi>
       </span>
       <span className="leader" aria-hidden />
-      <span className="shrink-0 font-mono tabular-nums">{value}</span>
+      <span className={`shrink-0 font-mono tabular-nums ${figure ? 'text-figure font-medium' : ''}`}>{value}</span>
     </span>
   )
 }
 
 /**
- * Fullness bar. `used` fills the track; `parts` (largest items first) split
- * the filled part, each separated by a card-coloured gap.
+ * Fullness bar, 12 tall. `used` fills the track; `parts` (largest items
+ * first) split the filled part, 2px apart so each reads as its own block.
  */
 export function UsageBar({
   total,
@@ -105,17 +105,13 @@ export function UsageBar({
     <div
       role="img"
       aria-label={label}
-      className="flex h-1.5 w-full overflow-hidden rounded-full bg-raised"
+      className="flex h-3 w-full gap-0.5 overflow-hidden rounded-tag bg-raised"
     >
       {parts.map((bytes, i) => (
-        <span
-          key={i}
-          className="h-full border-r border-card bg-ink-2"
-          style={{ width: `${pct(bytes)}%` }}
-        />
+        <span key={i} className="h-full shrink-0 bg-ink-2" style={{ width: `${pct(bytes)}%` }} />
       ))}
       <span
-        className={`h-full ${parts.length ? 'bg-ink-3' : 'bg-ink-2'}`}
+        className={`h-full shrink-0 ${parts.length ? 'bg-ink-3' : 'bg-ink-2'}`}
         style={{ width: `${pct(parts.length ? rest : used)}%` }}
       />
     </div>
@@ -123,17 +119,37 @@ export function UsageBar({
 }
 
 /**
- * An item's size against the largest item: a thin bar scaled with
- * `transform`, so it never animates layout. Decorative; the share column
- * carries the number.
+ * An item's size against the largest item: a thin bar in its own column,
+ * scaled with `transform`, so it never animates layout. Decorative; the share
+ * column carries the number.
  */
 export function ShareBar({ ratio, accent = false }: { ratio: number; accent?: boolean }) {
   return (
-    <span aria-hidden className="block h-1 w-full overflow-hidden rounded-full">
+    <span aria-hidden className="block h-1 w-full overflow-hidden rounded-full bg-raised">
       <span
         className={`block h-full origin-left rounded-full ${accent ? 'bg-accent' : 'bg-ink-3'}`}
         style={{ transform: `scaleX(${Math.min(1, Math.max(0, ratio))})` }}
       />
+    </span>
+  )
+}
+
+/** Stands in for the name when a translated sentence is split around it. */
+export const NAME = '\u0000'
+
+/**
+ * A translated line with a name in it, `text` holding `NAME` where the name
+ * goes: only the name truncates, the words around it always show.
+ */
+export function Named({ text, name }: { text: string; name: string }) {
+  const [before = '', after = ''] = text.split(NAME)
+  return (
+    <span className="flex min-w-0 items-baseline whitespace-pre">
+      {before && <span className="shrink-0">{before}</span>}
+      <span className="min-w-0 truncate" title={name}>
+        <bdi>{name}</bdi>
+      </span>
+      {after && <span className="shrink-0">{after}</span>}
     </span>
   )
 }

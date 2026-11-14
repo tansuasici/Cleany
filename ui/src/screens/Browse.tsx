@@ -1,16 +1,16 @@
 import { type KeyboardEvent, useCallback, useEffect, useRef, useState } from 'react'
-import { BackIcon, ChevronIcon, LeaderRow } from '../components/ui'
-import { formatBytes, formatCount, formatDate, formatShare } from '../lib/format'
+import { ChevronIcon, LeaderRow } from '../components/ui'
+import { formatBytes, formatCount, formatDate, formatShare, truncateMiddle } from '../lib/format'
 import {
   type NodeEntry,
   type ScanId,
   type SortKey,
   type SortOrder,
-  getAncestors,
   getChildren,
 } from '../lib/ipc'
 import { type BrowseScreen, useStore } from '../store'
 import { useT } from '../useT'
+import { useTrail } from '../useTrail'
 
 /** DESIGN_MAP → Spacing: a tree table row is 32 tall. */
 const ROW = 32
@@ -23,6 +23,11 @@ type Sort = { key: SortKey; order: SortOrder }
 
 /** Sizes, counts and dates start largest/newest first; names start A→Z. */
 const firstOrder = (key: SortKey): SortOrder => (key === 'name' ? 'asc' : 'desc')
+
+/** Names longer than this are cut in the middle; the full name is in the footer and the tooltip. */
+const NAME_CHARS = 64
+/** The loading line waits this long, so a quick folder change doesn't flash it. */
+const LOADING_DELAY_MS = 250
 
 const opens = (row: NodeEntry | undefined): row is NodeEntry =>
   row !== undefined && row.kind === 'dir' && row.hasChildren
@@ -39,8 +44,7 @@ export function BrowseView({ screen }: { screen: BrowseScreen }) {
   const [cameFrom, setCameFrom] = useState<number | null>(null)
   const trail = useTrail(scan, node)
 
-  const label = (n: NodeEntry) => (n.id === done.summary.root.id ? done.target.name : n.name)
-  const name = label(node)
+  const name = node.id === done.summary.root.id ? done.target.name : node.name
   const parent = trail && trail.length > 1 ? trail[trail.length - 2] : undefined
 
   const open = (target: NodeEntry) => {
@@ -56,44 +60,8 @@ export function BrowseView({ screen }: { screen: BrowseScreen }) {
     setSort((s) => (s.key === key ? { key, order: s.order === 'asc' ? 'desc' : 'asc' } : { key, order: firstOrder(key) }))
 
   return (
-    <section aria-labelledby="browse-title" className="mx-auto flex h-full w-full max-w-280 flex-col px-8 pt-6 pb-4">
-      <div>
-        <button
-          type="button"
-          onClick={showSummary}
-          className="-ml-2 inline-flex h-8 items-center gap-1 rounded-control px-2 text-body text-ink-2 transition-[background-color] duration-150 ease-out hover:bg-raised hover:text-ink"
-        >
-          <BackIcon />
-          {t('browse.back')}
-        </button>
-      </div>
-
-      <nav aria-label={t('browse.location')} className="mt-2 min-h-6">
-        {trail && trail.length > 1 && (
-          <ol className="flex flex-wrap items-center gap-x-0.5 gap-y-1 text-secondary text-ink-2">
-            {trail.slice(0, -1).map((step) => (
-              <li key={step.id} className="flex min-w-0 items-center gap-x-0.5">
-                <button
-                  type="button"
-                  onClick={() => open(step)}
-                  title={label(step)}
-                  className="max-w-48 truncate rounded-tag px-1 transition-[background-color] duration-150 ease-out hover:bg-raised hover:text-ink"
-                >
-                  {label(step)}
-                </button>
-                <span aria-hidden className="text-ink-3">
-                  <ChevronIcon />
-                </span>
-              </li>
-            ))}
-            <li aria-current="page" className="max-w-64 truncate px-1 text-ink" title={name}>
-              {name}
-            </li>
-          </ol>
-        )}
-      </nav>
-
-      <h1 id="browse-title" className="mt-1 text-title font-medium">
+    <section aria-labelledby="browse-title" className="mx-auto flex h-full w-full max-w-240 flex-col px-8 pt-8 pb-4">
+      <h1 id="browse-title" className="text-title font-medium">
         <LeaderRow name={name} title={name} value={formatBytes(node.allocated, locale)} />
       </h1>
 
@@ -112,23 +80,6 @@ export function BrowseView({ screen }: { screen: BrowseScreen }) {
       <p className="mt-3 text-meta text-ink-3">{t('browse.hint')}</p>
     </section>
   )
-}
-
-/** Root-first ancestors of `node`, itself last; `null` until they arrive. */
-function useTrail(scan: ScanId, node: NodeEntry): NodeEntry[] | null {
-  const [trail, setTrail] = useState<{ id: number; list: NodeEntry[] } | null>(null)
-  useEffect(() => {
-    let live = true
-    getAncestors(scan, node.id).then(
-      (list) => live && setTrail({ id: node.id, list }),
-      // Without the chain the table still works; only the breadcrumb is lost.
-      () => live && setTrail({ id: node.id, list: [node] }),
-    )
-    return () => {
-      live = false
-    }
-  }, [scan, node])
-  return trail?.id === node.id ? trail.list : null
 }
 
 interface Pages {
@@ -238,6 +189,8 @@ function Table({
   }, [])
 
   const count = pages.total ?? 0
+  const slow = useLater(pages.total === null ? listKey : null, LOADING_DELAY_MS)
+  const selectedRow = row(active)
   const first = Math.max(0, Math.floor(scrollTop / ROW) - OVERSCAN)
   const last = Math.min(count, Math.ceil((scrollTop + height) / ROW) + OVERSCAN)
 
@@ -323,7 +276,10 @@ function Table({
     { key: 'files', label: t('browse.files'), align: 'right' },
     { key: 'modified', label: t('browse.modified'), align: 'right' },
   ]
-  const cols = 'grid grid-cols-[minmax(0,1fr)_6.5rem_4.5rem_6rem_8.5rem] gap-x-4 px-3'
+  // Below md only name and size fit; share, files and date drop out.
+  const cols =
+    'grid grid-cols-[minmax(0,1fr)_6.5rem] gap-x-4 px-3 md:grid-cols-[minmax(0,1fr)_6.5rem_4.5rem_6rem_8.5rem]'
+  const wide = 'hidden md:block'
 
   const rows = Array.from({ length: Math.max(0, last - first) }, (_, k) => {
     const i = first + k
@@ -348,9 +304,9 @@ function Table({
         {r ? (
           <>
             <span role="gridcell" className="flex min-w-0 items-center gap-1">
-              <span className="truncate" title={r.name}>
-                {r.name}
-              </span>
+              <bdi className="truncate" title={r.name}>
+                {truncateMiddle(r.name, NAME_CHARS)}
+              </bdi>
               {opens(r) && (
                 <span aria-hidden className="shrink-0 text-ink-3">
                   <ChevronIcon />
@@ -360,18 +316,18 @@ function Table({
             <span role="gridcell" className="text-right font-mono tabular-nums">
               {formatBytes(r.allocated, locale)}
             </span>
-            <span role="gridcell" className="text-right font-mono text-secondary text-ink-2 tabular-nums">
+            <span role="gridcell" className={`${wide} text-right font-mono text-secondary text-ink-2 tabular-nums`}>
               {formatShare(r.allocated, node.allocated, locale)}
             </span>
-            <span role="gridcell" className="text-right font-mono text-secondary text-ink-2 tabular-nums">
+            <span role="gridcell" className={`${wide} text-right font-mono text-secondary text-ink-2 tabular-nums`}>
               {r.kind === 'dir' ? formatCount(r.files, locale) : ''}
             </span>
-            <span role="gridcell" className="text-right text-secondary text-ink-2 tabular-nums">
+            <span role="gridcell" className={`${wide} text-right text-secondary text-ink-2 tabular-nums`}>
               {formatDate(r.modified, locale)}
             </span>
           </>
         ) : (
-          <span role="gridcell" className="text-ink-3">
+          <span role="gridcell" className="text-ink-2">
             …
           </span>
         )}
@@ -399,7 +355,7 @@ function Table({
               key={i}
               role="columnheader"
               aria-sort={sorted ? (sort.order === 'asc' ? 'ascending' : 'descending') : undefined}
-              className={c.align === 'right' ? 'text-right' : ''}
+              className={`${c.align === 'right' ? 'text-right' : ''} ${i >= 2 ? wide : ''}`}
             >
               {i === 2 ? (
                 c.label
@@ -407,7 +363,7 @@ function Table({
                 <button
                   type="button"
                   onClick={() => onSort(c.key)}
-                  className={`-mx-1 inline-flex items-center gap-1 rounded-tag px-1 hover:bg-raised hover:text-ink ${
+                  className={`-mx-1 inline-flex min-h-6 items-center gap-1 rounded-tag px-1 hover:bg-raised hover:text-ink ${
                     sorted ? 'text-ink' : ''
                   }`}
                 >
@@ -440,7 +396,9 @@ function Table({
             </button>
           </p>
         ) : pages.total === null ? (
-          <p className="px-3 py-2 text-ink-2">{t('browse.loading')}</p>
+          <p role="status" className="px-3 py-2 text-ink-2">
+            {slow && t('browse.loading')}
+          </p>
         ) : count === 0 ? (
           <p className="px-3 py-2 text-ink-2">{t('browse.empty')}</p>
         ) : (
@@ -449,6 +407,26 @@ function Table({
           </div>
         )}
       </div>
+
+      {/* The selected name in full; the row already says it to a screen reader. */}
+      <p aria-hidden className="flex h-8 shrink-0 items-center border-t border-hairline px-4 text-meta text-ink-2">
+        {selectedRow && (
+          <bdi className="min-w-0 truncate" title={selectedRow.name}>
+            {selectedRow.name}
+          </bdi>
+        )}
+      </p>
     </div>
   )
+}
+
+/** True once `key` has stayed the same, and not null, for `ms`. */
+function useLater(key: string | null, ms: number): boolean {
+  const [due, setDue] = useState<string | null>(null)
+  useEffect(() => {
+    if (key === null) return
+    const id = window.setTimeout(() => setDue(key), ms)
+    return () => window.clearTimeout(id)
+  }, [key, ms])
+  return key !== null && due === key
 }

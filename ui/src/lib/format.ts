@@ -57,3 +57,27 @@ export function formatDate(seconds: number, locale: Locale): string {
   if (seconds <= 0) return '—'
   return new Intl.DateTimeFormat(locale, { dateStyle: 'medium' }).format(seconds * 1000)
 }
+
+/**
+ * Shortens `name` to at most `max` characters by cutting its middle, so both
+ * the start and the extension stay readable: `rapor-2026-…-son.pdf`.
+ */
+export function truncateMiddle(name: string, max: number): string {
+  const chars = Array.from(name)
+  if (chars.length <= max) return name
+  const keep = max - 1
+  const head = Math.ceil(keep / 2)
+  return `${chars.slice(0, head).join('')}…${chars.slice(chars.length - (keep - head)).join('')}`
+}
+
+/** How long ago `at` (ms since the epoch) was, from `now`: `5 dk önce`. */
+export function formatAgo(at: number, now: number, locale: Locale): string {
+  const seconds = Math.max(0, Math.round((now - at) / 1000))
+  const rtf = new Intl.RelativeTimeFormat(locale, { numeric: 'auto', style: 'short' })
+  if (seconds < 60) return translate(locale, 'ago.now')
+  const minutes = Math.round(seconds / 60)
+  if (minutes < 60) return rtf.format(-minutes, 'minute')
+  const hours = Math.round(minutes / 60)
+  if (hours < 24) return rtf.format(-hours, 'hour')
+  return rtf.format(-Math.round(hours / 24), 'day')
+}
