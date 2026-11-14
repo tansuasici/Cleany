@@ -60,6 +60,8 @@ fn json_report_has_totals_and_children() {
             .all(|k| k["allocated"].as_u64().unwrap() <= first)
     );
     assert!(v["issues"].as_array().unwrap().is_empty());
+    assert_eq!(v["hardlinks"], 0);
+    assert_eq!(v["placeholders"], 0);
 }
 
 #[test]
@@ -89,6 +91,12 @@ fn text_report_lists_largest_child() {
 fn du_total_matches_within_1_percent() {
     let tmp = tempfile::tempdir().unwrap();
     fixture(tmp.path());
+    // `du` counts each hard-linked file once; so must we.
+    fs::hard_link(
+        tmp.path().join("big.bin"),
+        tmp.path().join("d0/big-link.bin"),
+    )
+    .unwrap();
 
     // POSIX `du -s -k`: total allocated KiB, directories included.
     let du = Command::new("du").arg("-sk").arg(tmp.path()).output();

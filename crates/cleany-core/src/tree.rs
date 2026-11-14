@@ -31,6 +31,9 @@ pub enum TreeError {
     /// The parent id does not refer to a directory in this tree.
     #[error("parent is not a directory in this tree")]
     InvalidParent,
+    /// The id does not refer to a non-directory in this tree.
+    #[error("node is not a file in this tree")]
+    NotAFile,
 }
 
 /// Handle to a node in a [`Tree`]. Only valid for the tree that issued it.
@@ -59,6 +62,33 @@ pub enum NodeKind {
     Other,
 }
 
+/// Extra facts about a node, as a small bit set.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct NodeFlags(u8);
+
+impl NodeFlags {
+    /// No flags set.
+    pub const NONE: Self = Self(0);
+    /// Another hard link to the same file in this tree carries its bytes;
+    /// this node's own size is zero so the data is counted once.
+    pub const HARDLINK: Self = Self(1);
+    /// Cloud placeholder whose data is not stored locally. A placeholder
+    /// directory is recorded but not descended into.
+    pub const PLACEHOLDER: Self = Self(1 << 1);
+
+    /// Whether every flag in `other` is set.
+    #[must_use]
+    pub const fn contains(self, other: Self) -> bool {
+        self.0 & other.0 == other.0
+    }
+
+    /// Both sets of flags.
+    #[must_use]
+    pub const fn union(self, other: Self) -> Self {
+        Self(self.0 | other.0)
+    }
+}
+
 /// One entry of the tree. Sizes are aggregated for directories once the tree
 /// is finished.
 #[derive(Debug, Clone)]
@@ -69,6 +99,7 @@ pub struct Node {
     name_off: u32,
     name_len: u16,
     kind: NodeKind,
+    flags: NodeFlags,
     file_count: u32,
     size: Size,
     mtime: i64,
@@ -79,6 +110,12 @@ impl Node {
     #[must_use]
     pub const fn kind(&self) -> NodeKind {
         self.kind
+    }
+
+    /// Flags such as [`NodeFlags::HARDLINK`].
+    #[must_use]
+    pub const fn flags(&self) -> NodeFlags {
+        self.flags
     }
 
     /// Size of the entry; for directories, the entry itself plus everything below it.
@@ -119,6 +156,8 @@ pub struct EntryInfo {
     pub size: Size,
     /// Modification time in seconds since the Unix epoch.
     pub mtime: i64,
+    /// Initial flags (the scanner sets [`NodeFlags::PLACEHOLDER`]).
+    pub flags: NodeFlags,
 }
 
 /// Arena storage shared by [`TreeBuilder`] and [`Tree`].
@@ -131,6 +170,17 @@ struct Arena {
 impl Arena {
     fn node(&self, id: NodeId) -> Option<&Node> {
         self.nodes.get(id.index())
+    }
+
+    fn path(&self, id: NodeId) -> Option<PathBuf> {
+        let mut parts = Vec::new();
+        let mut cur = Some(id);
+        while let Some(c) = cur {
+            let n = self.node(c)?;
+            parts.push(self.names.get(n.name_off, n.name_len));
+            cur = n.parent();
+        }
+        Some(parts.iter().rev().collect())
     }
 }
 
@@ -202,6 +252,29 @@ impl TreeBuilder {
         Ok(NodeId(raw))
     }
 
+    /// Full path of a node added so far; see [`Tree::path`].
+    #[must_use]
+    pub fn path(&self, id: NodeId) -> Option<PathBuf> {
+        self.arena.path(id)
+    }
+
+    /// Marks a non-directory as a further hard link to data counted at
+    /// another node: its own size becomes zero and it gets
+    /// [`NodeFlags::HARDLINK`]. It still counts as one file.
+    ///
+    /// # Errors
+    /// [`TreeError::NotAFile`] if `id` is a directory or not in this tree.
+    pub fn mark_hardlink(&mut self, id: NodeId) -> Result<(), TreeError> {
+        match self.arena.nodes.get_mut(id.index()) {
+            Some(n) if n.kind != NodeKind::Dir => {
+                n.size = Size::default();
+                n.flags = n.flags.union(NodeFlags::HARDLINK);
+                Ok(())
+            }
+            _ => Err(TreeError::NotAFile),
+        }
+    }
+
     /// Rolls sizes and file counts up to every ancestor and freezes the tree.
     #[must_use]
     pub fn finish(mut self) -> Tree {
@@ -230,6 +303,7 @@ const fn new_node(parent: u32, name_off: u32, name_len: u16, info: EntryInfo) ->
         name_off,
         name_len,
         kind: info.kind,
+        flags: info.flags,
         file_count: if matches!(info.kind, NodeKind::Dir) {
             0
         } else {
@@ -281,14 +355,7 @@ impl Tree {
     /// Full path of the entry: the root path joined with every name below it.
     #[must_use]
     pub fn path(&self, id: NodeId) -> Option<PathBuf> {
-        let mut parts = Vec::new();
-        let mut cur = Some(id);
-        while let Some(c) = cur {
-            let n = self.node(c)?;
-            parts.push(self.arena.names.get(n.name_off, n.name_len));
-            cur = n.parent();
-        }
-        Some(parts.iter().rev().collect())
+        self.arena.path(id)
     }
 
     /// Direct children of `id` (order is unspecified; callers sort).
@@ -320,7 +387,7 @@ impl Iterator for Children<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::{EntryInfo, Node, NodeKind, TreeBuilder, TreeError};
+    use super::{EntryInfo, Node, NodeFlags, NodeKind, TreeBuilder, TreeError};
     use crate::Size;
     use std::ffi::OsStr;
     use std::path::PathBuf;
@@ -330,6 +397,7 @@ mod tests {
             kind,
             size: Size { logical, allocated },
             mtime: 0,
+            flags: NodeFlags::NONE,
         }
     }
 
@@ -414,5 +482,32 @@ mod tests {
             b.add_child(f, OsStr::new("x"), info(NodeKind::File, 1, 1)),
             Err(TreeError::InvalidParent)
         );
+    }
+
+    #[test]
+    fn hardlink_mark_zeroes_own_size_only() {
+        let mut b = TreeBuilder::new(OsStr::new("/r"), info(NodeKind::Dir, 0, 0)).unwrap();
+        let root = b.root();
+        let sub = b
+            .add_child(root, OsStr::new("sub"), info(NodeKind::Dir, 0, 0))
+            .unwrap();
+        let a = b
+            .add_child(root, OsStr::new("a"), info(NodeKind::File, 10, 4096))
+            .unwrap();
+        let dup = b
+            .add_child(sub, OsStr::new("a2"), info(NodeKind::File, 10, 4096))
+            .unwrap();
+        assert_eq!(b.mark_hardlink(sub), Err(TreeError::NotAFile));
+        b.mark_hardlink(dup).unwrap();
+        let t = b.finish();
+
+        let d = t.node(dup).unwrap();
+        assert!(d.flags().contains(NodeFlags::HARDLINK));
+        assert_eq!(d.size(), Size::default());
+        assert_eq!(d.file_count(), 1);
+        assert!(!t.node(a).unwrap().flags().contains(NodeFlags::HARDLINK));
+        let r = t.node(t.root()).unwrap();
+        assert_eq!(r.size().allocated, 4096);
+        assert_eq!(r.file_count(), 2);
     }
 }
