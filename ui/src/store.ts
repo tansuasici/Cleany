@@ -36,11 +36,15 @@ export type TopItems =
 /** A finished scan; it stays openable until the next scan starts. */
 export type DoneScreen = { kind: 'done'; target: Target; summary: ScanSummary; top: TopItems }
 
+/** The tree table, open at `node` (a folder) of a finished scan. */
+export type BrowseScreen = { kind: 'browse'; done: DoneScreen; node: NodeEntry }
+
 /** The screen on show; each variant carries exactly the data it needs. */
 export type Screen =
   | { kind: 'volumes' }
   | { kind: 'scanning'; target: Target; scan: ScanId | null; progress: Progress | null }
   | DoneScreen
+  | BrowseScreen
   | { kind: 'cancelled'; target: Target }
   | { kind: 'failed'; target: Target; message: string }
 
@@ -53,6 +57,8 @@ export type Volumes =
 export interface VolumeBreakdown {
   items: { name: string; allocated: number }[]
   allocated: number
+  /** When the scan finished, in ms since the epoch. */
+  at: number
 }
 
 /** How many items the döküm lists. */
@@ -69,12 +75,20 @@ interface State {
    * keeps one tree and a new scan makes the old ids stale.
    */
   last: DoneScreen | null
+  /** Döküm folders opened in place, by node id; kept while moving to the table and back. */
+  opened: number[]
   setLocale: (locale: Locale) => void
   loadVolumes: () => Promise<void>
   scan: (target: Target) => Promise<void>
   cancel: () => Promise<void>
   showVolumes: () => void
   openLast: () => void
+  /** Opens the tree table at `node`, from the döküm or the table itself. */
+  browse: (node: NodeEntry) => void
+  /** Leaves the tree table for its döküm. */
+  showSummary: () => void
+  /** Opens or closes a döküm folder in place. */
+  toggleOpened: (id: number) => void
 }
 
 const LOCALE_KEY = 'cleany.locale'
@@ -106,6 +120,7 @@ export const useStore = create<State>()((set, get) => ({
   screen: { kind: 'volumes' },
   breakdowns: {},
   last: null,
+  opened: [],
 
   setLocale: (locale) => {
     try {
@@ -129,7 +144,7 @@ export const useStore = create<State>()((set, get) => ({
     const gen = ++generation
     const current = () => gen === generation
     cancelPending = false
-    set({ screen: { kind: 'scanning', target, scan: null, progress: null }, last: null })
+    set({ screen: { kind: 'scanning', target, scan: null, progress: null }, last: null, opened: [] })
 
     try {
       const scan = await startScan(target.path, false, (event) => {
@@ -194,6 +209,25 @@ export const useStore = create<State>()((set, get) => ({
     const { last } = get()
     if (last) set({ screen: last })
   },
+
+  browse: (node) => {
+    const { screen, last } = get()
+    // The döküm on show, or the one the table was opened from; `last` holds
+    // its latest `top`, which may have loaded after the table opened.
+    const done = screen.kind === 'done' ? screen : screen.kind === 'browse' ? screen.done : null
+    if (!done) return
+    const current = last?.summary.scan === done.summary.scan ? last : done
+    set({ screen: { kind: 'browse', done: current, node } })
+  },
+
+  showSummary: () => {
+    const { screen, last } = get()
+    if (screen.kind !== 'browse') return
+    set({ screen: last?.summary.scan === screen.done.summary.scan ? last : screen.done })
+  },
+
+  toggleOpened: (id) =>
+    set(({ opened }) => ({ opened: opened.includes(id) ? opened.filter((o) => o !== id) : [...opened, id] })),
 }))
 
 async function loadTop(target: Target, summary: ScanSummary) {
@@ -210,6 +244,7 @@ async function loadTop(target: Target, summary: ScanSummary) {
     const breakdown: VolumeBreakdown = {
       items: page.items.map(({ name, allocated }) => ({ name, allocated })),
       allocated: summary.root.allocated,
+      at: Date.now(),
     }
     useStore.setState((s) => ({ breakdowns: { ...s.breakdowns, [target.path]: breakdown } }))
   } catch {
