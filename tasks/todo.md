@@ -60,8 +60,8 @@ UI birim testi için test runner (vitest) **eklenmiyor**; ihtiyaç doğarsa ayr�
 - macOS'ta `/System/Volumes/*` bağlama noktaları listede gizlenir (Finder da gizler). Kullanıcı yalnızca "Macintosh HD" (`/`) görür.
 
 #### Durum
-- [x] PR 1 `feat(app): scan session IPC`: branch `feat/m2-scan-ipc`, PR açıldı, incelemede.
-- [x] PR 2 `feat(platform): volume list`: branch `feat/m2-volume-list` (PR 1'in üstüne kurulu), PR açıldı, incelemede.
+- [x] PR 1 `feat(app): scan session IPC`: #9 merge edildi.
+- [x] PR 2 `feat(platform): volume list`: branch `feat/m2-volume-list`, PR açıldı, incelemede.
 - [ ] PR 3–5
 
 #### Open Questions
