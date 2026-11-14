@@ -1,11 +1,13 @@
 import { create } from 'zustand'
 import {
+  type DiskAccess,
   type NodeEntry,
   type ScanId,
   type ScanSummary,
   type VolumeEntry,
   cancelScan,
   getChildren,
+  getDiskAccess,
   listVolumes,
   startScan,
 } from './lib/ipc'
@@ -66,6 +68,10 @@ export const TOP_ITEMS = 12
 
 interface State {
   locale: Locale
+  /** macOS Full Disk Access; `null` until the first check answers. */
+  access: DiskAccess | null
+  /** The user put the Full Disk Access panel aside ("Şimdilik geç"). */
+  accessDismissed: boolean
   volumes: Volumes
   screen: Screen
   /** Keyed by mount point. */
@@ -78,6 +84,9 @@ interface State {
   /** Döküm folders opened in place, by node id; kept while moving to the table and back. */
   opened: number[]
   setLocale: (locale: Locale) => void
+  /** Re-checks Full Disk Access; run at start and whenever the window regains focus. */
+  checkAccess: () => Promise<void>
+  dismissAccess: () => void
   loadVolumes: () => Promise<void>
   scan: (target: Target) => Promise<void>
   cancel: () => Promise<void>
@@ -103,6 +112,16 @@ function initialLocale(): Locale {
   return detectLocale()
 }
 
+const ACCESS_DISMISSED_KEY = 'cleany.accessDismissed'
+
+function initialAccessDismissed(): boolean {
+  try {
+    return localStorage.getItem(ACCESS_DISMISSED_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
 const message = (error: unknown) =>
   typeof error === 'object' && error !== null && 'message' in error
     ? String((error as { message: unknown }).message)
@@ -116,6 +135,8 @@ let cancelPending = false
 
 export const useStore = create<State>()((set, get) => ({
   locale: initialLocale(),
+  access: null,
+  accessDismissed: initialAccessDismissed(),
   volumes: { status: 'loading' },
   screen: { kind: 'volumes' },
   breakdowns: {},
@@ -129,6 +150,24 @@ export const useStore = create<State>()((set, get) => ({
       // Not persisting the choice is acceptable.
     }
     set({ locale })
+  },
+
+  checkAccess: async () => {
+    try {
+      set({ access: await getDiskAccess() })
+    } catch {
+      // A failed check says nothing about access; show nothing.
+      set({ access: 'unknown' })
+    }
+  },
+
+  dismissAccess: () => {
+    try {
+      localStorage.setItem(ACCESS_DISMISSED_KEY, '1')
+    } catch {
+      // Not persisting the choice is acceptable.
+    }
+    set({ accessDismissed: true })
   },
 
   loadVolumes: async () => {

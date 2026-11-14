@@ -72,9 +72,52 @@ UI birim testi için test runner (vitest) **eklenmiyor**; ihtiyaç doğarsa ayr�
 - [x] PR 2 `feat(platform): volume list`: #10 merge edildi.
 - [x] Tasarım yönü: `/design-brief` + `/direction` tamam, yön A "Döküm fişi" onaylandı (ui/DESIGN_MAP.md).
 - [x] PR 3 `feat(ui): shell, volumes, scan screen`: #12 merge edildi. İptal takılması #13 ile düzeldi.
-- [x] PR 4 `feat(ui): tree table`: onaylandı, smoke test geçti (`feat/m2-tree-table`).
-- [ ] PR 5
-- [ ] Tasarım geçişi `feat/m2-design-pass`: plan onaylandı (2026-11-15, "A + B önerilerimle"): A'nın tamamı + B1 evet, B2 2px adımı ekle / 6'ları ölçeğe yuvarla, B3 evet, B4 evet, B5 hayır, B6 hayır. C bu PR'da yok. Uygulanıyor.
+- [x] PR 4 `feat(ui): tree table`: #15 içinde merge edildi (#14 kapatıldı, içeriği #15'te).
+- [ ] PR 5 `feat(app): macOS Full Disk Access onboarding` (Notion #22): plan onaylandı ("Onaylıyorum, başla") ve uygulandı (`feat/m2-fda-onboarding`).
+- [x] Tasarım geçişi: #15 merge edildi (2026-11-15, "A + B önerilerimle"). C fikirleri bu PR'a girmedi.
+- [x] Canlı tarama sayaçları (leader satırları) paketli uygulamada görsel olarak doğrulandı (PR 5 smoke testi).
+
+#### PR 5 planı (`feat/m2-fda-onboarding`, Notion #22)
+**Kabul**: macOS'ta Tam Disk Erişimi (FDA) yoksa birimler ekranında kullanıcıyı engellemeyen bir panel nedenini anlatır. "Sistem Ayarları'nı aç" düğmesi doğru bölmeyi açar. Kullanıcı ayarlardan döndüğünde durum kendiliğinden yeniden kontrol edilir; erişim verildiyse panel kaybolur. Windows ve Linux'ta hiçbir şey görünmez.
+
+- **Rust, `src-tauri/src/access.rs` (yeni)**:
+  - `disk_access() -> DiskAccess` döner: `Granted | Denied | Unknown | NotApplicable`.
+    - Uygulamada: alanı olmayan bir enum olduğu için `kind` etiketi yerine düz dize olarak serileşir (`"granted"`, `"notApplicable"` …). `AccessError` `kind` etiketlidir.
+  - **Tespit sezgiseldir.** Yalnızca FDA ile okunabilen dosyalar `File::open` ile açılır; içerik okunmaz.
+    - Önce `/Library/Application Support/com.apple.TCC/TCC.db`, sonra `~/Library/Safari`.
+    - `Ok` → `Granted`. `PermissionDenied` → `Denied`. `NotFound` veya başka bir hata bir sonraki adaya geçer. Hiçbiri karar vermezse `Unknown`.
+  - Hata türünden duruma çeviren saf bir `classify(io::ErrorKind)` fonksiyonu vardır. Gerçek TCC durumu testte kurulamayacağı için birim testleri bunun üzerinde yapılır.
+  - `open_disk_access_settings() -> Result<(), AccessError>`: sabit `x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles` URL'iyle `/usr/bin/open` çalıştırır. UI'dan URL ya da argüman alınmaz. macOS dışında `Unsupported` döner.
+- **`lib.rs`**: iki ince `#[tauri::command]` sarmalayıcısı eklenir. Capability (`core:default`) ve CSP değişmez. Yeni bağımlılık yok.
+- **UI**:
+  - `lib/ipc.ts`: `DiskAccess` tipi ve iki çağrı.
+  - `store.ts`: `access` durumu. Açılışta ve pencere odağa döndüğünde (`focus` olayı, kullanıcı ayarlardan geri geldiğinde) yeniden kontrol edilir.
+  - `screens/Volumes.tsx`: yalnızca `Denied` olduğunda birim listesinin üstünde bir panel gösterilir.
+    - Tek cümleyle neden: korumalı klasörler (Mail, Safari, başka uygulamaların verileri) okunamaz, toplam eksik kalır.
+    - Birincil düğme: "Sistem Ayarları'nı aç". Sessiz metin düğmesi: "Şimdilik geç".
+    - Not: erişim verildikten sonra macOS uygulamayı yeniden açmayı isteyebilir.
+    - Tarama engellenmez.
+    - "Şimdilik geç" seçimi `localStorage`'da tutulur. `Unknown` durumunda panel gösterilmez; sezgisel tespit yanlış negatif verirse kullanıcı rahatsız edilmez.
+  - `screens/Summary.tsx`: `Denied` iken "Sayılmayanlar" altındaki "okunamayan N öğe" satırına tek bir cümle eklenir: "Tam Disk Erişimi verilmedi" ve ayarları açan bir bağlantı. Panel kapatılmış olsa bile bu ipucu kalır.
+  - `lib/i18n.ts`: TR/EN anahtarları.
+- **Tasarım**: yön içinde kalır. Panel mevcut `rounded-panel border-hairline bg-card` kartıdır. Yeni token ya da ortak bileşen değişikliği yok; mevcut `Button` kullanılır. Uyarı rengi, ikon ya da kırmızı yok; bu bir hata değil, bir eksiklik notu.
+- **Dokunulacak dosyalar**:
+  - Rust: `src-tauri/src/access.rs` (yeni), `src-tauri/src/lib.rs`.
+  - UI: `ui/src/lib/ipc.ts`, `ui/src/store.ts`, `ui/src/screens/Volumes.tsx`, `ui/src/screens/Summary.tsx`, `ui/src/lib/i18n.ts`.
+- **Testler**:
+  - `classify_maps_permission_denied_to_denied`, `classify_skips_not_found`.
+  - `non_macos_is_not_applicable` (`cfg(not(target_os = "macos"))`).
+  - `disk_access_serializes_kind_tag`.
+  - `ipc_ts_mentions_every_serialized_key` testi `DiskAccess`'i de kapsayacak şekilde genişletilir.
+- **Doğrulama**:
+  - cargo zinciri ve `pnpm typecheck/lint/build`.
+  - Paketli `Cleany.app` ile smoke test: FDA kapalıyken panel görünür ve düğme doğru Ayarlar bölmesini açar. FDA verilip uygulamaya dönülünce panel kaybolur. Bu iki adımı kullanıcının yapması gerekir, çünkü FDA'yı yalnızca kullanıcı açıp kapatabilir.
+  - Koyu/açık ve TR/EN ekran görüntüleri.
+- **Bilinen sınırlama**: `pnpm tauri dev` altında TCC izni uygulamaya değil Terminal'e aittir. Gerçek davranış yalnızca paketli `.app` ile doğrulanır.
+
+Sorular:
+1. Notion panosu geride kalmış: #5, #18, #19, #20, #21 ve #23 hâlâ Backlog, Devam ediyor ya da İncelemede görünüyor, ama işleri #9–#15 ile merge edildi. Bunlar "Bitti" yapılsın mı (önerim: evet)?
+2. Dökümdeki FDA ipucu bu PR'a girsin mi (önerim: evet; okunamayan öğeleri en çok o anda fark ediyorsun)?
 
 #### Tasarım geçişi: denetim bulguları ve düzeltme planı (2026-11-15)
 **Kaynak**: paketli uygulamadan 11 ekran görüntüsü alındı (koyu/açık, TR/EN; birimler, tarama, döküm, açılmış döküm, ağaç tablo). Kit'in `/slop-audit`, `/interface-check` ve `/stress-ui` denetimleri ile Fable'ın bağımsız tasarım eleştirisi bu görüntüler ve kod üzerinden yapıldı. Kontrastlar WCAG formülüyle **ölçüldü**: ink-3 yalnızca raised zeminde kalıyor (4,17–4,27), geri kalan her şey AA'yı geçiyor.
@@ -179,7 +222,7 @@ _2026-11-14: 1 → yön A; 2 → `sysinfo`, `zustand` onaylandı, `tauri-specta`
 - Treemap, breakdown, top files, arama, reveal/open/trash/delete (M3+, PLAN §3.4).
 - Birden fazla eşzamanlı tarama/sekme.
 - **Tarama sonucu kalıcı değil**: her tarama sıfırdan yürür; sonuç yalnızca oturum belleğinde (tek ağaç). Son taramayı diske yazıp açılışta göstermek ve FSEvents (macOS) / USN günlüğü (Windows) ile artımlı güncelleme yapmak ayrı bir iş (M7 hızlı yollarla birlikte ya da sonrası).
-- **macOS'ta `/` taraması Data birimini iki kez sayabilir**: `/`, `/Users` ve `/System/Volumes/Data` aynı `dev` değerini döndürüyor (APFS volume group). `cross_mounts=false` sınırı bu yüzden durmuyor. `/Users` firmlink üzerinden bir kez, `/System/Volumes/Data/Users` üzerinden bir kez daha yürünür. Çözüm core tarayıcıda olmalı (kök `/` iken `/System/Volumes/Data` atlanmalı). Ölçülüp doğrulanmadı.
+- **macOS'ta `/` taraması Data birimini iki kez sayabilir**: `/`, `/Users` ve `/System/Volumes/Data` aynı `dev` değerini döndürüyor (APFS volume group). `cross_mounts=false` sınırı bu yüzden durmuyor. `/Users` firmlink üzerinden bir kez, `/System/Volumes/Data/Users` üzerinden bir kez daha yürünür. Çözüm core tarayıcıda olmalı (kök `/` iken `/System/Volumes/Data` atlanmalı). **Ölçüldü (2026-11-15, PR 5 smoke testi)**: 928 GB dolu Macintosh HD taraması toplam 1,5 TB verdi; `System` 804 GB, `Users` 599 GB. Çift sayım doğrulandı.
 
 ---
 

@@ -15,10 +15,19 @@ export default function App() {
   const screen = useStore((s) => s.screen)
   const setLocale = useStore((s) => s.setLocale)
   const loadVolumes = useStore((s) => s.loadVolumes)
+  const checkAccess = useStore((s) => s.checkAccess)
 
   useEffect(() => {
     void loadVolumes()
   }, [loadVolumes])
+
+  // Coming back from System Settings is the moment access may have changed.
+  useEffect(() => {
+    void checkAccess()
+    const onFocus = () => void checkAccess()
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
+  }, [checkAccess])
 
   useEffect(() => {
     document.documentElement.lang = locale

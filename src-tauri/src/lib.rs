@@ -1,5 +1,6 @@
 //! Tauri shell for Cleany. Commands here stay thin; logic lives in `cleany-core`.
 
+mod access;
 mod session;
 mod volumes;
 
@@ -9,6 +10,7 @@ use cleany_core::ScanOptions;
 use serde::Serialize;
 use tauri::ipc::Channel;
 
+use access::{AccessError, DiskAccess};
 use session::{
     ChildrenPage, NodeEntry, ScanEvent, ScanId, SessionError, Sessions, SortKey, SortOrder,
 };
@@ -88,6 +90,18 @@ fn get_ancestors(
     sessions.ancestors(scan, node)
 }
 
+/// Best-effort macOS Full Disk Access status; `notApplicable` elsewhere.
+#[tauri::command(async)]
+fn disk_access() -> DiskAccess {
+    access::status()
+}
+
+/// Opens System Settings at the Full Disk Access pane (macOS only).
+#[tauri::command(async)]
+fn open_disk_access_settings() -> Result<(), AccessError> {
+    access::open_settings()
+}
+
 /// Builds and runs the Tauri application.
 ///
 /// # Panics
@@ -101,7 +115,9 @@ pub fn run() {
             start_scan,
             cancel_scan,
             get_children,
-            get_ancestors
+            get_ancestors,
+            disk_access,
+            open_disk_access_settings
         ])
         .run(tauri::generate_context!());
     if let Err(err) = result {
