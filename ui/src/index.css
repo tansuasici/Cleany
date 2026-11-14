@@ -1,3 +1,125 @@
 @import "tailwindcss";
 
-/* Design tokens will come from ui/DESIGN_MAP.md once the direction is approved. */
+/*
+ * Tokens from ui/DESIGN_MAP.md → Tokens (direction A, "Döküm fişi").
+ * The theme follows the system; `<html data-theme="light|dark">` forces one.
+ */
+
+:root {
+  color-scheme: light;
+  --c-deepest: #efe9df;
+  --c-page: #f7f4ee;
+  --c-card: #fdfbf7;
+  --c-raised: #efe9df;
+  --c-ink: #1f1b16;
+  --c-ink-2: #5e554a;
+  --c-ink-3: #756c60;
+  --c-hairline: rgb(31 27 22 / 0.08);
+  --c-accent: #2547b8;
+  --c-on-accent: #fdfbf7;
+  --c-positive: #16a34a;
+  --c-negative: #dc2626;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --c-deepest: #12110f;
+    --c-page: #161513;
+    --c-card: #1c1a18;
+    --c-raised: #262421;
+    --c-ink: #efe9de;
+    --c-ink-2: #aaa398;
+    --c-ink-3: #8a847a;
+    --c-hairline: rgb(239 233 222 / 0.08);
+    --c-accent: #8ea6ff;
+    --c-on-accent: #12110f;
+    --c-positive: #4cc38a;
+    --c-negative: #e5484d;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --c-deepest: #12110f;
+  --c-page: #161513;
+  --c-card: #1c1a18;
+  --c-raised: #262421;
+  --c-ink: #efe9de;
+  --c-ink-2: #aaa398;
+  --c-ink-3: #8a847a;
+  --c-hairline: rgb(239 233 222 / 0.08);
+  --c-accent: #8ea6ff;
+  --c-on-accent: #12110f;
+  --c-positive: #4cc38a;
+  --c-negative: #e5484d;
+}
+
+@theme inline {
+  --color-deepest: var(--c-deepest);
+  --color-page: var(--c-page);
+  --color-card: var(--c-card);
+  --color-raised: var(--c-raised);
+  --color-ink: var(--c-ink);
+  --color-ink-2: var(--c-ink-2);
+  --color-ink-3: var(--c-ink-3);
+  --color-hairline: var(--c-hairline);
+  --color-accent: var(--c-accent);
+  --color-on-accent: var(--c-on-accent);
+  --color-positive: var(--c-positive);
+  --color-negative: var(--c-negative);
+}
+
+@theme {
+  --font-sans: system-ui, -apple-system, "Segoe UI", Cantarell, "Noto Sans", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", "DejaVu Sans Mono", monospace;
+
+  --text-meta: 12px;
+  --text-meta--line-height: 16px;
+  --text-secondary: 13px;
+  --text-secondary--line-height: 20px;
+  --text-body: 14px;
+  --text-body--line-height: 20px;
+  --text-strong: 15px;
+  --text-strong--line-height: 22px;
+  --text-title: 20px;
+  --text-title--line-height: 28px;
+  --text-figure: 28px;
+  --text-figure--line-height: 1;
+
+  --radius-tag: 4px;
+  --radius-control: 6px;
+  --radius-card: 8px;
+  --radius-panel: 10px;
+
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    background: var(--c-page);
+    color: var(--c-ink);
+    font-family: var(--font-sans);
+    font-size: var(--text-body);
+    line-height: var(--text-body--line-height);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--c-accent);
+    outline-offset: 2px;
+  }
+}
+
+/* Signature: the dotted leader between a name and its size. */
+@utility leader {
+  flex: 1 1 auto;
+  min-width: 16px;
+  border-bottom: 1px dotted var(--c-ink-3);
+}
