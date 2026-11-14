@@ -345,6 +345,15 @@ impl Tree {
         self.arena.node(id)
     }
 
+    /// The id of the node at arena position `index`, or `None` if out of
+    /// range. Inverse of [`NodeId::index`], so ids can cross a process
+    /// boundary (e.g. IPC) as plain integers.
+    #[must_use]
+    pub fn node_id(&self, index: u32) -> Option<NodeId> {
+        let id = NodeId(index);
+        self.node(id).map(|_| id)
+    }
+
     /// Name of the entry (the full scanned path for the root).
     #[must_use]
     pub fn name(&self, id: NodeId) -> Option<OsString> {
@@ -509,5 +518,26 @@ mod tests {
         let r = t.node(t.root()).unwrap();
         assert_eq!(r.size().allocated, 4096);
         assert_eq!(r.file_count(), 2);
+    }
+
+    #[test]
+    fn node_id_round_trips_index() {
+        let mut b = TreeBuilder::new(OsStr::new("/r"), info(NodeKind::Dir, 0, 0)).unwrap();
+        let a = b
+            .add_child(b.root(), OsStr::new("a"), info(NodeKind::File, 1, 1))
+            .unwrap();
+        let t = b.finish();
+        for id in [t.root(), a] {
+            let index = u32::try_from(id.index()).unwrap();
+            assert_eq!(t.node_id(index), Some(id));
+        }
+    }
+
+    #[test]
+    fn node_id_rejects_out_of_range() {
+        let b = TreeBuilder::new(OsStr::new("/r"), info(NodeKind::Dir, 0, 0)).unwrap();
+        let t = b.finish();
+        assert_eq!(t.node_id(1), None);
+        assert_eq!(t.node_id(u32::MAX), None);
     }
 }
