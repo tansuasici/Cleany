@@ -18,7 +18,7 @@ Give the task you are actively working on an `h3` heading under **In Progress** 
 #### PR bölümü
 | PR | Kartlar | İçerik | Yeni bağımlılık (onay gerekir) | Tasarıma bağlı mı |
 |---|---|---|---|---|
-| 1 `feat(app): scan session IPC` | #18, #20 (backend) | Tek oturumluk tarama kaydı, `start_scan` / `cancel_scan` / `get_children` / `get_ancestors`, ilerleme `tauri::ipc::Channel` üzerinden (core zaten ≤10 Hz), DTO'lar, TS tipleri | `specta` + `tauri-specta` **veya** elle TS tipleri (Soru 3) | Hayır |
+| 1 `feat(app): scan session IPC` | #18, #20 (backend) | Tek oturumluk tarama kaydı, `start_scan` / `cancel_scan` / `get_children` / `get_ancestors`, ilerleme `tauri::ipc::Channel` üzerinden (core zaten ≤10 Hz), DTO'lar, TS tipleri | Elle TS tipleri (tauri-specta RC) + drift testi | Hayır |
 | 2 `feat(platform): volume list` | #19 (backend) | `list_volumes() -> Vec<Volume { mount, name, total, available, removable }>`, `list_volumes` komutu | `sysinfo` (yalnızca `disk` özelliği) (Soru 2) | Hayır |
 | 3 `feat(ui): shell, volumes, scan screen` | #19, #20 (UI), #23 | Uygulama kabuğu, birim listesi, ilerleme + iptal ekranı, TR/EN sözlük, açık/koyu tema tokenları | `zustand` | **Evet** |
 | 4 `feat(ui): tree table` | #21 | Sanal liste, sütuna göre sıralama, tek tıkla içine girme, breadcrumb, klavye ile gezinme | `@tanstack/react-virtual` | **Evet** |
@@ -45,7 +45,7 @@ Give the task you are actively working on an `h3` heading under **In Progress** 
 | `new_start_cancels_running_scan` | tek oturum | 1 |
 | `ancestors_are_root_first` | breadcrumb | 1 |
 | `sort_100k_children_pages_fast` | önbellek (ölçüm/sınır) | 1 |
-| `ts_bindings_are_up_to_date` | TS tipleri Rust ile senkron (specta ya da serde snapshot) | 1 |
+| `ipc_ts_mentions_every_serialized_key` | ipc.ts her serileşen anahtarı ve etiketi içerir (alt dize kontrolü; tip uyuşmazlığını yakalamaz) | 1 |
 | `list_volumes_contains_root_mount` | birim listesi (Unix'te `/`, Windows'ta `C:\`) | 2 |
 | UI: `pnpm typecheck` + `lint` + `build` | eksik çeviri anahtarı, tipler | 3–5 |
 | Smoke: `pnpm tauri dev` ile gerçek pencerede birim → tara → iptal → tekrar tara → drill-down → breadcrumb | M2 kabul ölçütleri | 3–5 |

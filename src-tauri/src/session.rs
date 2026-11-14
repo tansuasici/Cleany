@@ -851,6 +851,22 @@ mod tests {
     }
 
     #[test]
+    fn cancel_signals_the_running_scan() {
+        let s = Sessions::default();
+        let id = ScanId(3);
+        let token = CancelToken::new();
+        *lock(&s.state) = State::Scanning {
+            id,
+            cancel: token.clone(),
+        };
+        let err = s.children(id, 0, SortKey::Name, SortOrder::Asc, 0, 10);
+        assert_eq!(err, Err(SessionError::NotReady));
+        assert_eq!(s.cancel(id), Ok(()));
+        assert!(token.is_cancelled());
+        assert_eq!(s.cancel(ScanId(4)), Err(SessionError::StaleScan));
+    }
+
+    #[test]
     fn new_start_cancels_running_scan() {
         let s = Sessions::default();
         let first_token = CancelToken::new();
