@@ -4,7 +4,10 @@
 //! calling thread, which is the only writer of the [`TreeBuilder`]: it assigns
 //! node ids and queues the subdirectories it finds. Links and junctions are
 //! recorded but never followed; mount points are not crossed unless asked.
+//! Hard-linked files are counted once (at their smallest path), and cloud
+//! placeholder directories are recorded but never listed.
 
+use std::collections::HashMap;
 use std::ffi::OsString;
 use std::fs;
 use std::io;
@@ -15,11 +18,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::time::{Duration, Instant};
 
-use cleany_platform::{EntryKind, EntryMeta, read_meta};
+use cleany_platform::{EntryKind, EntryMeta, read_entry_meta, read_meta};
 use thiserror::Error;
 
 use crate::Size;
-use crate::tree::{EntryInfo, NodeId, NodeKind, Tree, TreeBuilder, TreeError};
+use crate::tree::{EntryInfo, NodeFlags, NodeId, NodeKind, Tree, TreeBuilder, TreeError};
 
 /// Minimum time between two progress callbacks (at most 10 per second).
 pub const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
@@ -66,7 +69,7 @@ pub struct Progress {
     pub dirs: u64,
     /// Non-directory entries recorded so far.
     pub files: u64,
-    /// Allocated bytes recorded so far.
+    /// Allocated bytes recorded so far (each hard-linked file once).
     pub allocated: u64,
     /// Time since the scan started.
     pub elapsed: Duration,
@@ -94,6 +97,11 @@ pub struct ScanStats {
     pub others: u64,
     /// Directories on another device that were recorded but not entered.
     pub skipped_mounts: u64,
+    /// Further hard links to a file already counted; they add no bytes.
+    pub hardlinks: u64,
+    /// Cloud placeholders: files whose data is not local, and directories
+    /// that were recorded but not entered.
+    pub placeholders: u64,
     /// Wall-clock duration of the scan.
     pub elapsed: Duration,
 }
@@ -180,10 +188,13 @@ where
         issues: Vec::new(),
         stats: ScanStats::default(),
         allocated: 0,
+        links: HashMap::new(),
     };
-    state.count(&meta);
+    let root_id = state.tree.root();
+    state.record(root_id, &meta);
+    // An explicitly chosen root is listed even if it is a placeholder.
     if meta.kind != EntryKind::Dir {
-        return Ok(state.finish(start));
+        return state.finish(start);
     }
 
     let pool = rayon::ThreadPoolBuilder::new()
@@ -194,7 +205,6 @@ where
     let (tx, rx) = mpsc::channel::<Listing>();
     let spawn = |dir: NodeId, path: PathBuf| spawn_listing(&pool, &tx, cancel, dir, path);
 
-    let root_id = state.tree.root();
     spawn(root_id, walk_root);
     let mut pending: usize = 1;
     let mut throttle = Throttle::new(start, PROGRESS_INTERVAL);
@@ -229,7 +239,7 @@ where
     if cancelled {
         return Err(ScanError::Cancelled);
     }
-    Ok(state.finish(start))
+    state.finish(start)
 }
 
 /// Builder-thread state: the only writer of the tree.
@@ -238,10 +248,13 @@ struct Builder {
     issues: Vec<ScanIssue>,
     stats: ScanStats,
     allocated: u64,
+    /// Files with more than one link, by `(dev, file_id)`.
+    links: HashMap<(u64, u64), Vec<NodeId>>,
 }
 
 impl Builder {
-    fn count(&mut self, meta: &EntryMeta) {
+    /// Updates counters and hard-link groups for a node just added.
+    fn record(&mut self, id: NodeId, meta: &EntryMeta) {
         let slot = match meta.kind {
             EntryKind::Dir => &mut self.stats.dirs,
             EntryKind::File => &mut self.stats.files,
@@ -249,7 +262,20 @@ impl Builder {
             EntryKind::Other => &mut self.stats.others,
         };
         *slot += 1;
-        self.allocated = self.allocated.saturating_add(meta.allocated);
+        if meta.placeholder {
+            self.stats.placeholders += 1;
+        }
+        // Directories' link counts mean subdirectories on Unix, so only
+        // files are grouped; an unknown id (0) is never grouped.
+        let mut first = true;
+        if meta.kind == EntryKind::File && meta.nlink > 1 && meta.file_id != 0 {
+            let group = self.links.entry((meta.dev, meta.file_id)).or_default();
+            first = group.is_empty();
+            group.push(id);
+        }
+        if first {
+            self.allocated = self.allocated.saturating_add(meta.allocated);
+        }
     }
 
     /// Records one listing and returns the subdirectories to scan next.
@@ -285,9 +311,11 @@ impl Builder {
                 }
             };
             let id = self.tree.add_child(dir, &name, entry_info(&meta))?;
-            self.count(&meta);
+            self.record(id, &meta);
             if meta.kind == EntryKind::Dir {
-                if cross_mounts || meta.dev == root_dev {
+                if meta.placeholder {
+                    // Listing a dataless directory can start a download.
+                } else if cross_mounts || meta.dev == root_dev {
                     subdirs.push((id, path.join(&name)));
                 } else {
                     self.stats.skipped_mounts += 1;
@@ -306,13 +334,31 @@ impl Builder {
         }
     }
 
-    fn finish(mut self, start: Instant) -> ScanResult {
+    /// Counts each hard-linked file once, at the link with the smallest
+    /// path, so the result does not depend on listing order.
+    fn dedup_hardlinks(&mut self) -> Result<(), TreeError> {
+        for group in self.links.values().filter(|g| g.len() > 1) {
+            let owner = group
+                .iter()
+                .copied()
+                .min_by_key(|&id| self.tree.path(id))
+                .ok_or(TreeError::NotAFile)?;
+            for &id in group.iter().filter(|&&id| id != owner) {
+                self.tree.mark_hardlink(id)?;
+                self.stats.hardlinks += 1;
+            }
+        }
+        Ok(())
+    }
+
+    fn finish(mut self, start: Instant) -> Result<ScanResult, ScanError> {
+        self.dedup_hardlinks()?;
         self.stats.elapsed = start.elapsed();
-        ScanResult {
+        Ok(ScanResult {
             tree: self.tree.finish(),
             issues: self.issues,
             stats: self.stats,
-        }
+        })
     }
 }
 
@@ -366,10 +412,9 @@ fn list_dir(path: &Path) -> io::Result<DirRead> {
     };
     for entry in fs::read_dir(path)? {
         match entry {
-            // `DirEntry::metadata` does not follow symlinks on any platform.
             Ok(e) => read.entries.push(Entry {
                 name: e.file_name(),
-                meta: e.metadata().map(|md| EntryMeta::from_metadata(&md)),
+                meta: read_entry_meta(&e),
             }),
             Err(error) => read.errors.push(error),
         }
@@ -385,6 +430,11 @@ fn entry_info(meta: &EntryMeta) -> EntryInfo {
             allocated: meta.allocated,
         },
         mtime: meta.mtime,
+        flags: if meta.placeholder {
+            NodeFlags::PLACEHOLDER
+        } else {
+            NodeFlags::NONE
+        },
     }
 }
 

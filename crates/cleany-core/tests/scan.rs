@@ -13,7 +13,9 @@ use std::fs;
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 
-use cleany_core::{CancelToken, NodeId, NodeKind, ScanError, ScanOptions, Size, Tree, scan};
+use cleany_core::{
+    CancelToken, NodeFlags, NodeId, NodeKind, ScanError, ScanOptions, Size, Tree, scan,
+};
 use cleany_platform::{EntryKind, read_meta};
 use tempfile::TempDir;
 
@@ -133,6 +135,49 @@ fn cancel_stops_scan() {
     cancel.cancel();
     let err = scan(tmp.path(), &ScanOptions::default(), &cancel, |_| {}).unwrap_err();
     assert!(matches!(err, ScanError::Cancelled));
+}
+
+#[test]
+fn hardlinks_counted_once_deterministically() {
+    let tmp = fixture();
+    let r = tmp.path();
+    let target = r.join("a/two.bin");
+    let links = [r.join("many/d03/link.bin"), r.join("zz-link.bin")];
+    for l in &links {
+        fs::hard_link(&target, l).unwrap();
+    }
+    // The naive walker counts every link in full.
+    let mut naive = Flat::new();
+    let (naive_total, _) = reference(r, &mut naive);
+    let one = naive[&target].1;
+
+    for threads in [1, 4, 0] {
+        let res = scan_ok(r, &opts(threads));
+        let flat = flatten(&res.tree);
+        assert_eq!(flat[&target].1, one, "smallest path owns the bytes");
+        for l in &links {
+            assert_eq!(flat[l].1, Size::default(), "{}", l.display());
+        }
+        let root = res.tree.node(res.tree.root()).unwrap();
+        assert_eq!(
+            root.size().allocated,
+            naive_total.allocated - 2 * one.allocated
+        );
+        assert_eq!(root.file_count(), 306, "links still count as files");
+        assert_eq!(res.stats.hardlinks, 2, "threads = {threads}");
+        let flagged = res
+            .tree
+            .children(res.tree.root())
+            .filter(|&c| {
+                res.tree
+                    .node(c)
+                    .unwrap()
+                    .flags()
+                    .contains(NodeFlags::HARDLINK)
+            })
+            .count();
+        assert_eq!(flagged, 1, "only zz-link.bin at the top level");
+    }
 }
 
 #[cfg(unix)]

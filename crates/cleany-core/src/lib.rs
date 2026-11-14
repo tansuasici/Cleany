@@ -11,7 +11,9 @@ pub use scan::{
     CancelToken, PROGRESS_INTERVAL, Progress, ScanError, ScanIssue, ScanOptions, ScanResult,
     ScanStats, scan,
 };
-pub use tree::{Children, EntryInfo, Node, NodeId, NodeKind, Tree, TreeBuilder, TreeError};
+pub use tree::{
+    Children, EntryInfo, Node, NodeFlags, NodeId, NodeKind, Tree, TreeBuilder, TreeError,
+};
 
 use serde::Serialize;
 

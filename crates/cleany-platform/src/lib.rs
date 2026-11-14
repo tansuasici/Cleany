@@ -3,7 +3,7 @@
 
 pub mod meta;
 
-pub use meta::{EntryKind, EntryMeta, read_meta};
+pub use meta::{EntryKind, EntryMeta, read_entry_meta, read_meta};
 
 use serde::Serialize;
 

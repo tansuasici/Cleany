@@ -227,6 +227,8 @@ fn json_report(r: &ScanResult) -> String {
         "symlinks": r.stats.symlinks,
         "others": r.stats.others,
         "skipped_mounts": r.stats.skipped_mounts,
+        "hardlinks": r.stats.hardlinks,
+        "placeholders": r.stats.placeholders,
         "elapsed_ms": u64::try_from(r.stats.elapsed.as_millis()).unwrap_or(u64::MAX),
         "children": children,
         "issues": issues,
@@ -258,6 +260,16 @@ fn text_report(r: &ScanResult) -> String {
         "  {} files, {} dirs, {} symlinks in {:.2?}",
         r.stats.files, r.stats.dirs, r.stats.symlinks, r.stats.elapsed
     );
+    if r.stats.hardlinks > 0 {
+        let _ = writeln!(s, "  {} extra hard links counted once", r.stats.hardlinks);
+    }
+    if r.stats.placeholders > 0 {
+        let _ = writeln!(
+            s,
+            "  {} cloud placeholders not downloaded",
+            r.stats.placeholders
+        );
+    }
     let kids = sorted_children(tree);
     if !kids.is_empty() {
         s.push('\n');
