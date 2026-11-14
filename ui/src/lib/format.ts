@@ -51,3 +51,9 @@ export function formatShare(part: number, whole: number, locale: Locale): string
   const percent = new Intl.NumberFormat(locale, { style: 'percent', maximumFractionDigits: 0 })
   return ratio > 0 && ratio < 0.005 ? `< ${percent.format(0.01)}` : percent.format(ratio)
 }
+
+/** Formats seconds since the Unix epoch as a medium date; unknown is `—`. */
+export function formatDate(seconds: number, locale: Locale): string {
+  if (seconds <= 0) return '—'
+  return new Intl.DateTimeFormat(locale, { dateStyle: 'medium' }).format(seconds * 1000)
+}

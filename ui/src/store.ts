@@ -36,11 +36,15 @@ export type TopItems =
 /** A finished scan; it stays openable until the next scan starts. */
 export type DoneScreen = { kind: 'done'; target: Target; summary: ScanSummary; top: TopItems }
 
+/** The tree table, open at `node` (a folder) of a finished scan. */
+export type BrowseScreen = { kind: 'browse'; done: DoneScreen; node: NodeEntry }
+
 /** The screen on show; each variant carries exactly the data it needs. */
 export type Screen =
   | { kind: 'volumes' }
   | { kind: 'scanning'; target: Target; scan: ScanId | null; progress: Progress | null }
   | DoneScreen
+  | BrowseScreen
   | { kind: 'cancelled'; target: Target }
   | { kind: 'failed'; target: Target; message: string }
 
@@ -75,6 +79,10 @@ interface State {
   cancel: () => Promise<void>
   showVolumes: () => void
   openLast: () => void
+  /** Opens the tree table at `node`, from the döküm or the table itself. */
+  browse: (node: NodeEntry) => void
+  /** Leaves the tree table for its döküm. */
+  showSummary: () => void
 }
 
 const LOCALE_KEY = 'cleany.locale'
@@ -193,6 +201,22 @@ export const useStore = create<State>()((set, get) => ({
   openLast: () => {
     const { last } = get()
     if (last) set({ screen: last })
+  },
+
+  browse: (node) => {
+    const { screen, last } = get()
+    // The döküm on show, or the one the table was opened from; `last` holds
+    // its latest `top`, which may have loaded after the table opened.
+    const done = screen.kind === 'done' ? screen : screen.kind === 'browse' ? screen.done : null
+    if (!done) return
+    const current = last?.summary.scan === done.summary.scan ? last : done
+    set({ screen: { kind: 'browse', done: current, node } })
+  },
+
+  showSummary: () => {
+    const { screen, last } = get()
+    if (screen.kind !== 'browse') return
+    set({ screen: last?.summary.scan === screen.done.summary.scan ? last : screen.done })
   },
 }))
 

@@ -15,6 +15,7 @@ export function SummaryScreen({ screen }: Props) {
   const { t, locale } = useT()
   const scan = useStore((s) => s.scan)
   const showVolumes = useStore((s) => s.showVolumes)
+  const browse = useStore((s) => s.browse)
   const { target, summary, top } = screen
   const { root, stats, issues, issueCount } = summary
   const bytes = (n: number) => formatBytes(n, locale)
@@ -128,6 +129,7 @@ export function SummaryScreen({ screen }: Props) {
       </article>
 
       <div className="mt-6 flex items-center gap-3">
+        {root.hasChildren && <Button onClick={() => browse(root)}>{t('summary.browseAll')}</Button>}
         <Button onClick={showVolumes}>{t('backToVolumes')}</Button>
         <button
           type="button"
@@ -167,8 +169,10 @@ function ItemRow({
   expandable?: boolean
 }) {
   const { t, locale } = useT()
+  const browse = useStore((s) => s.browse)
   const [children, setChildren] = useState<Children>({ status: 'closed' })
-  const canOpen = expandable && item.kind === 'dir' && item.hasChildren
+  const isFolder = item.kind === 'dir' && item.hasChildren
+  const canExpand = expandable && isFolder
   const open = children.status !== 'closed'
   const row = <LeaderRow name={item.name} title={item.name} value={formatBytes(item.allocated, locale)} />
 
@@ -189,23 +193,35 @@ function ItemRow({
   return (
     <li>
       <div className="grid grid-cols-[1fr_3.5rem] items-baseline gap-x-4 gap-y-1.5">
-        {canOpen ? (
-          <button
-            type="button"
-            aria-expanded={open}
-            onClick={() => void toggle()}
-            className="-mx-1 flex min-w-0 items-baseline gap-1 rounded-tag px-1 text-left hover:bg-raised"
-          >
-            <span
-              className={`shrink-0 self-center text-ink-3 transition-transform duration-150 ease-out motion-reduce:transition-none ${open ? 'rotate-90' : ''}`}
+        <span className={`flex min-w-0 items-baseline gap-1 ${expandable && !canExpand ? 'pl-5' : ''}`}>
+          {canExpand && (
+            // The chevron opens a level in place; the name goes into the folder.
+            <button
+              type="button"
+              aria-expanded={open}
+              aria-label={t('summary.expandLabel', { name: item.name })}
+              onClick={() => void toggle()}
+              className="-m-1 shrink-0 self-center rounded-tag p-1 text-ink-3 hover:bg-raised hover:text-ink"
             >
-              <ChevronIcon />
-            </span>
-            {row}
-          </button>
-        ) : (
-          <span className={expandable ? 'pl-5' : ''}>{row}</span>
-        )}
+              <span
+                className={`block transition-transform duration-150 ease-out motion-reduce:transition-none ${open ? 'rotate-90' : ''}`}
+              >
+                <ChevronIcon />
+              </span>
+            </button>
+          )}
+          {isFolder ? (
+            <button
+              type="button"
+              onClick={() => browse(item)}
+              className="-mx-1 flex min-w-0 flex-1 rounded-tag px-1 text-left hover:bg-raised"
+            >
+              {row}
+            </button>
+          ) : (
+            row
+          )}
+        </span>
         <span className="text-right font-mono text-secondary text-ink-2 tabular-nums">
           {formatShare(item.allocated, total, locale)}
         </span>

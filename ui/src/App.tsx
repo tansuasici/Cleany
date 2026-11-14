@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { BackIcon } from './components/ui'
+import { BrowseView } from './screens/Browse'
 import { EndedScreen } from './screens/Ended'
 import { ScanningScreen } from './screens/Scanning'
 import { SummaryScreen } from './screens/Summary'
@@ -52,6 +53,7 @@ export default function App() {
         {screen.kind === 'volumes' && <VolumesScreen />}
         {screen.kind === 'scanning' && <ScanningScreen screen={screen} />}
         {screen.kind === 'done' && <SummaryScreen screen={screen} />}
+        {screen.kind === 'browse' && <BrowseView screen={screen} />}
         {(screen.kind === 'cancelled' || screen.kind === 'failed') && <EndedScreen screen={screen} />}
       </main>
     </div>

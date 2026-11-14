@@ -71,8 +71,23 @@ UI birim testi için test runner (vitest) **eklenmiyor**; ihtiyaç doğarsa ayr�
 - [x] PR 1 `feat(app): scan session IPC`: #9 merge edildi.
 - [x] PR 2 `feat(platform): volume list`: #10 merge edildi.
 - [x] Tasarım yönü: `/design-brief` + `/direction` tamam, yön A "Döküm fişi" onaylandı (ui/DESIGN_MAP.md).
-- [ ] PR 3 `feat(ui): shell, volumes, scan screen`: devam ediyor.
-- [ ] PR 4–5
+- [x] PR 3 `feat(ui): shell, volumes, scan screen`: #12 merge edildi. İptal takılması #13 ile düzeldi.
+- [x] PR 4 `feat(ui): tree table`: onaylandı, smoke test geçti (`feat/m2-tree-table`).
+- [ ] PR 5
+
+#### PR 4 planı (`feat/m2-tree-table`, Notion #21)
+- **Giriş noktası**: dökümde bir kalemin adına tıklanınca ağaç tablo o klasörde açılır. "Tümüne göz at" bağlantısı tabloyu kökte açar. Döküm Moment 2 olarak yerinde kalır, tablo dökümün yerine geçmez. Yeni bir ekran türü eklenir: `{ kind: 'browse'; done: DoneScreen; node; sort; order }`. Geri dönüşte döküm açılır.
+- **Breadcrumb**: `getAncestors` ile kökten seçili klasöre kadar parçalar, en sonda toplam (DESIGN_MAP: leader çizgisi breadcrumb toplamında kullanılır). Her parça tıklanabilir.
+- **Tablo**: sütunlar Ad · Boyut (allocated) · Pay (üst klasöre göre) · Dosya · Değiştirilme. Satır yüksekliği 32px. Rakamlar sağa hizalı, `tabular-nums` ve mono. Leader yok. Başlığa tıklanınca o sütuna göre sıralanır (ikinci tıklama yönü çevirir). Sıralama `aria-sort` ile duyurulur.
+- **Sanal liste**: satırlar 32px sabit olduğu için pencereleme elle yazılır: `scrollTop / 32` aralığı ve ±10 satır tampon. **Bağımlılık eklenmez.** Satırlar 200'lük sayfalar halinde, görünür aralık geldikçe `getChildren` ile alınır. Önbellek klasör + sıralama ile anahtarlanır, sıralama değişince sıfırlanır.
+- **Gezinme**: tek tık ya da Enter klasörün içine girer (ADR-0004). Dosyalar seçilir ama içine girilmez. Klavye: ↑/↓ satır, Home/End, PageUp/PageDown, Enter/→ içine gir, Backspace/← üst klasör, Esc dökümüne dön. Tablo ARIA `grid` değil, `aria-activedescendant` kullanan bir `listbox`/`table` olur. Odak halkası görünür.
+- **Durumlar**: yükleniyor, hata, boş klasör ve `StaleScan` (yeni tarama başladıysa birimlere döner). 100k çocuklu bir klasörde kaydırmanın akıcı olduğu gerçek uygulamada kontrol edilir.
+- **Dokunulacak dosyalar**: `store.ts` (browse ekranı), `screens/Browse.tsx` (yeni), `screens/Summary.tsx` (giriş bağlantıları), `App.tsx` (yönlendirme), `lib/i18n.ts` (TR/EN anahtarları), `lib/format.ts` (tarih biçimi). Rust tarafında değişiklik yok.
+- **Doğrulama**: typecheck/lint/build, cargo zinciri, paketli uygulamada açık+koyu ekran görüntüsü, klavyeyle gezinme ve 100k çocuklu bir test klasörü.
+
+Sorular:
+1. `@tanstack/react-virtual` yerine elle pencereleme (önerim: satırlar sabit 32px olduğu için ~40 satır kod yeter, bağımlılık gerekmez)?
+2. Giriş noktası olarak dökümden tıklama ve "Tümüne göz at" uygun mu? Yoksa tablo, tarama bitince doğrudan dökümün altında mı gösterilsin?
 
 #### Open Questions
 _2026-11-14: 1 → yön A; 2 → `sysinfo`, `zustand` onaylandı, `tauri-specta` alınmadı; 3, 4 cevaplandı (bkz. Kararlar)._
