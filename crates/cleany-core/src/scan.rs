@@ -163,10 +163,25 @@ pub fn scan<F>(
     root: &Path,
     opts: &ScanOptions,
     cancel: &CancelToken,
-    mut on_progress: F,
+    on_progress: F,
 ) -> Result<ScanResult, ScanError>
 where
     F: FnMut(&Progress),
+{
+    scan_with(root, opts, cancel, on_progress, list_dir)
+}
+
+/// [`scan`] with the directory lister as a parameter (a seam for tests).
+fn scan_with<F, L>(
+    root: &Path,
+    opts: &ScanOptions,
+    cancel: &CancelToken,
+    mut on_progress: F,
+    lister: L,
+) -> Result<ScanResult, ScanError>
+where
+    F: FnMut(&Progress),
+    L: Fn(&Path) -> io::Result<DirRead> + Send + Sync + 'static,
 {
     let start = Instant::now();
     if cancel.is_cancelled() {
@@ -203,29 +218,29 @@ where
         .build()
         .map_err(|e| ScanError::ThreadPool(e.to_string()))?;
     let (tx, rx) = mpsc::channel::<Listing>();
-    let spawn = |dir: NodeId, path: PathBuf| spawn_listing(&pool, &tx, cancel, dir, path);
+    let lister = Arc::new(lister);
+    let spawn = |dir: NodeId, path: PathBuf| spawn_listing(&pool, &tx, cancel, &lister, dir, path);
 
     spawn(root_id, walk_root);
     let mut pending: usize = 1;
     let mut throttle = Throttle::new(start, PROGRESS_INTERVAL);
-    let mut cancelled = false;
 
     while pending > 0 {
-        let listing = match rx.recv_timeout(POLL_INTERVAL) {
+        let listing = rx.recv_timeout(POLL_INTERVAL);
+        // Return without waiting for in-flight workers: one may be stuck in
+        // `opendir` (e.g. behind a macOS privacy prompt) indefinitely. They
+        // hold only clones of `tx` and `cancel`, so their late sends fail once
+        // `rx` is dropped, and dropping `pool` does not join its threads.
+        if cancel.is_cancelled() {
+            return Err(ScanError::Cancelled);
+        }
+        let listing = match listing {
             Ok(listing) => listing,
-            Err(RecvTimeoutError::Timeout) => {
-                cancelled |= cancel.is_cancelled();
-                continue;
-            }
+            Err(RecvTimeoutError::Timeout) => continue,
             // Unreachable while `tx` is alive; stop rather than spin.
             Err(RecvTimeoutError::Disconnected) => break,
         };
         pending -= 1;
-        cancelled |= cancel.is_cancelled();
-        if cancelled {
-            // Drain in-flight workers (they skip work once cancelled).
-            continue;
-        }
         for (id, path) in state.apply(listing, meta.dev, opts.cross_mounts)? {
             spawn(id, path);
             pending += 1;
@@ -236,9 +251,6 @@ where
         }
     }
 
-    if cancelled {
-        return Err(ScanError::Cancelled);
-    }
     state.finish(start)
 }
 
@@ -382,15 +394,19 @@ struct Listing {
     read: io::Result<DirRead>,
 }
 
-fn spawn_listing(
+fn spawn_listing<L>(
     pool: &rayon::ThreadPool,
     tx: &Sender<Listing>,
     cancel: &CancelToken,
+    lister: &Arc<L>,
     dir: NodeId,
     path: PathBuf,
-) {
+) where
+    L: Fn(&Path) -> io::Result<DirRead> + Send + Sync + 'static,
+{
     let tx = tx.clone();
     let cancel = cancel.clone();
+    let lister = Arc::clone(lister);
     pool.spawn(move || {
         let read = if cancel.is_cancelled() {
             Ok(DirRead {
@@ -398,7 +414,7 @@ fn spawn_listing(
                 errors: Vec::new(),
             })
         } else {
-            list_dir(&path)
+            lister(&path)
         };
         // A send error only means the scan already returned; nothing to do.
         let _ = tx.send(Listing { dir, path, read });
@@ -465,8 +481,53 @@ impl Throttle {
 
 #[cfg(test)]
 mod tests {
-    use super::{PROGRESS_INTERVAL, Throttle};
+    use super::{CancelToken, DirRead, PROGRESS_INTERVAL, ScanError, ScanOptions, Throttle};
+    use std::path::Path;
+    use std::sync::{Mutex, mpsc};
+    use std::thread;
     use std::time::{Duration, Instant};
+
+    /// A worker stuck in `opendir` (here: a lister that blocks until
+    /// released) must not keep a cancelled scan from returning.
+    #[test]
+    fn cancel_returns_while_worker_is_blocked() {
+        let (entered_tx, entered_rx) = mpsc::channel::<()>();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let release_rx = Mutex::new(release_rx);
+        let lister = move |_: &Path| {
+            let _ = entered_tx.send(());
+            // Blocks until `release_tx` is dropped at the end of the test.
+            if let Ok(rx) = release_rx.lock() {
+                let _ = rx.recv();
+            }
+            Ok(DirRead {
+                entries: Vec::new(),
+                errors: Vec::new(),
+            })
+        };
+
+        let cancel = CancelToken::new();
+        let (done_tx, done_rx) = mpsc::channel();
+        let scan_cancel = cancel.clone();
+        thread::spawn(move || {
+            let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+            let result =
+                super::scan_with(root, &ScanOptions::default(), &scan_cancel, |_| {}, lister);
+            let _ = done_tx.send(result.map(|_| ()));
+        });
+
+        entered_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("worker should start listing the root");
+        let cancelled_at = Instant::now();
+        cancel.cancel();
+        let result = done_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("cancelled scan should return while a worker is blocked");
+        assert!(cancelled_at.elapsed() < Duration::from_secs(2));
+        assert!(matches!(result, Err(ScanError::Cancelled)));
+        drop(release_tx);
+    }
 
     #[test]
     fn progress_is_throttled() {
