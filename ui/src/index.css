@@ -117,9 +117,17 @@
   }
 }
 
-/* Signature: the dotted leader between a name and its size. */
+/*
+ * Signature: the leader between a name and its size. 2px dots on a 6px
+ * period, drawn as a pattern so every webview renders them the same; an empty
+ * flex item's baseline is its bottom edge, so the dots sit on the text baseline.
+ */
 @utility leader {
   flex: 1 1 auto;
   min-width: 16px;
-  border-bottom: 1px dotted var(--c-ink-3);
+  height: 2px;
+  margin-bottom: 1px;
+  background-image: radial-gradient(circle at 1px 1px, var(--c-ink-3) 1px, transparent 1.2px);
+  background-size: 6px 2px;
+  background-repeat: repeat-x;
 }

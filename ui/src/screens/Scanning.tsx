@@ -1,5 +1,5 @@
-import { useEffect } from 'react'
-import { Button } from '../components/ui'
+import { useEffect, useRef, useState } from 'react'
+import { Button, NAME, Named } from '../components/ui'
 import { formatBytes, formatCount, formatDuration } from '../lib/format'
 import { type Screen, useStore } from '../store'
 import { useT } from '../useT'
@@ -28,44 +28,43 @@ export function ScanningScreen({ screen }: Props) {
   const found = progress?.allocated ?? 0
   const used = target.used !== undefined && target.used > 0 ? target.used : undefined
   const ratio = used === undefined ? 0 : Math.min(0.98, found / used)
+  const announced = useAnnounced(progress ? bytes(found) : null)
 
   // Values update in place, without animation (DESIGN_MAP → Motion).
   return (
-    <section aria-labelledby="scan-title" className="mx-auto w-full max-w-200 px-8 py-10">
-      <h1 id="scan-title" className="truncate text-title font-medium" title={target.name}>
-        {t('scan.title', { name: target.name })}
+    <section aria-labelledby="scan-title" className="mx-auto w-full max-w-200 px-8 py-16">
+      <h1 id="scan-title" className="text-title font-medium">
+        <Named text={t('scan.title', { name: NAME })} name={target.name} />
       </h1>
-      <p className="mt-1 truncate font-mono text-meta text-ink-3" title={target.path}>
-        {target.path}
-      </p>
 
       <div className="mt-8 rounded-panel border border-hairline bg-card p-6">
-        <p className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-          <span className="text-figure font-medium tabular-nums">{progress ? bytes(found) : '—'}</span>
-          <span className="text-ink-2">
-            {used === undefined ? t('scan.found') : t('scan.foundOf', { used: bytes(used) })}
-          </span>
-        </p>
-        {used !== undefined && (
-          <span
-            role="img"
-            aria-label={t('scan.progressLabel', { found: bytes(found), used: bytes(used) })}
-            className="mt-5 block h-1.5 w-full overflow-hidden rounded-full border border-hairline bg-raised"
-          >
-            <span
-              className="block h-full origin-left bg-ink-2"
-              style={{ transform: `scaleX(${ratio})` }}
-            />
-          </span>
+        {progress === null ? (
+          <p className="text-ink-2">{t('scan.starting')}</p>
+        ) : (
+          <>
+            <p className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+              <span className="font-mono text-figure font-medium tabular-nums">{bytes(found)}</span>
+              {used !== undefined && <span className="text-ink-2">{t('scan.foundOf', { used: bytes(used) })}</span>}
+            </p>
+            {used !== undefined && (
+              <span
+                role="img"
+                aria-label={t('scan.progressLabel', { found: bytes(found), used: bytes(used) })}
+                className="mt-5 block h-1 w-full overflow-hidden rounded-full bg-raised"
+              >
+                <span className="block h-full origin-left bg-ink-2" style={{ transform: `scaleX(${ratio})` }} />
+              </span>
+            )}
+            <dl className="mt-6 flex max-w-80 flex-col gap-1 text-secondary text-ink-2">
+              <Counter label={t('scan.files')} value={formatCount(progress.files, locale)} />
+              <Counter label={t('scan.dirs')} value={formatCount(progress.dirs, locale)} />
+              <Counter label={t('scan.elapsed')} value={formatDuration(progress.elapsedMs, locale)} />
+            </dl>
+          </>
         )}
-        <p className="mt-4 text-secondary text-ink-2 tabular-nums">
-          {progress
-            ? t('scan.counts', {
-                files: formatCount(progress.files, locale),
-                dirs: formatCount(progress.dirs, locale),
-                elapsed: formatDuration(progress.elapsedMs, locale),
-              })
-            : t('scan.starting')}
+        {/* The figures change ten times a second; a screen reader hears one now and then. */}
+        <p role="status" className="sr-only">
+          {announced && t('scan.status', { found: announced })}
         </p>
       </div>
 
@@ -77,4 +76,32 @@ export function ScanningScreen({ screen }: Props) {
       </div>
     </section>
   )
+}
+
+/** A live counter as a leader line: `Dosya ······ 12.408`. */
+function Counter({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex min-w-0 items-baseline gap-2">
+      <dt className="shrink-0">{label}</dt>
+      <span className="leader" aria-hidden />
+      <dd className="shrink-0 font-mono text-ink tabular-nums">{value}</dd>
+    </div>
+  )
+}
+
+/** How often the scan's status line is refreshed for screen readers. */
+const ANNOUNCE_MS = 10_000
+
+/** `value`, but changing at most once every `ANNOUNCE_MS`. */
+function useAnnounced(value: string | null): string | null {
+  const latest = useRef(value)
+  useEffect(() => {
+    latest.current = value
+  })
+  const [announced, setAnnounced] = useState<string | null>(null)
+  useEffect(() => {
+    const id = window.setInterval(() => setAnnounced(latest.current), ANNOUNCE_MS)
+    return () => window.clearInterval(id)
+  }, [])
+  return announced
 }

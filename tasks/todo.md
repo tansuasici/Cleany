@@ -71,8 +71,89 @@ UI birim testi için test runner (vitest) **eklenmiyor**; ihtiyaç doğarsa ayr�
 - [x] PR 1 `feat(app): scan session IPC`: #9 merge edildi.
 - [x] PR 2 `feat(platform): volume list`: #10 merge edildi.
 - [x] Tasarım yönü: `/design-brief` + `/direction` tamam, yön A "Döküm fişi" onaylandı (ui/DESIGN_MAP.md).
-- [ ] PR 3 `feat(ui): shell, volumes, scan screen`: devam ediyor.
-- [ ] PR 4–5
+- [x] PR 3 `feat(ui): shell, volumes, scan screen`: #12 merge edildi. İptal takılması #13 ile düzeldi.
+- [x] PR 4 `feat(ui): tree table`: onaylandı, smoke test geçti (`feat/m2-tree-table`).
+- [ ] PR 5
+- [ ] Tasarım geçişi `feat/m2-design-pass`: plan onaylandı (2026-11-15, "A + B önerilerimle"): A'nın tamamı + B1 evet, B2 2px adımı ekle / 6'ları ölçeğe yuvarla, B3 evet, B4 evet, B5 hayır, B6 hayır. C bu PR'da yok. Uygulanıyor.
+
+#### Tasarım geçişi: denetim bulguları ve düzeltme planı (2026-11-15)
+**Kaynak**: paketli uygulamadan 11 ekran görüntüsü alındı (koyu/açık, TR/EN; birimler, tarama, döküm, açılmış döküm, ağaç tablo). Kit'in `/slop-audit`, `/interface-check` ve `/stress-ui` denetimleri ile Fable'ın bağımsız tasarım eleştirisi bu görüntüler ve kod üzerinden yapıldı. Kontrastlar WCAG formülüyle **ölçüldü**: ink-3 yalnızca raised zeminde kalıyor (4,17–4,27), geri kalan her şey AA'yı geçiyor.
+
+**Genel teşhis**: slop yok denecek kadar az (gradyan, glow, emoji, hype yok). Sorun silik uygulama. Yön doğru tanımlanmış ama çekingen uygulanmış:
+- Dökümde gözün ineceği bir nokta yok. Cevap rakam (toplam), ama en altta 15px kalıyor.
+- Toplam üç kez yazılıyor.
+- Döküm ekranında birincil eylem yok.
+- Leader çizgisi küçük ölçekte noktalı değil düz bir çizgi gibi okunuyor, altındaki ShareBar ile çift alt çizgi oluşturuyor.
+- 1200×800 pencerenin yarısı boş.
+- Tarama ve tablo ekranları herhangi bir rakibin ekranı olabilir.
+
+**Görünen ad**: `tauri.conf.json` içinde `mainBinaryName: "Cleany"` ayarlandı (pencere, menü, .app ve binary "Cleany"; Cargo paketi içeride `cleany-app` kalır). Commit edilmedi, bu PR'a girecek.
+
+##### A. Yön içinde (ekran düzeyi, onay sonrası doğrudan uygulanır)
+1. **Döküm: cevap rakam olsun.** Toplam yalnızca bir kez, alt toplam çizgisinin altında yazılır (Moments), ama `text-figure` (28/500, mono) olur. Lede'den "404 MB" çıkar, yalnızca "Birimde 389 MB boş." kalır.
+2. **Döküm: tek birincil eylem.** "Tümüne göz at" birincil (accent) olur ve ilk sıraya geçer. "Birimlere dön" kaldırılır (başlıktaki geri bağlantısı aynı işi yapıyor). "Yeniden tara" sessiz metin düğmesi olarak sağa alınır.
+3. **Döküm: satır düzeni.** ShareBar adın altından kendi sütununa taşınır (ad ··· boyut | çubuk 120px | pay). Çift alt çizgi kalkar. %0,5'in altındaki kalemlerde çubuk gösterilmez, böylece 1px "toz" çizgiler kaybolur.
+4. **Döküm: iki eylem, tek işaret.** Şu an chevron yerinde açıyor, ad ise başka ekrana götürüyor ve bunu gösteren hiçbir şey yok. Satırın tamamı yerinde açar. Hover ve odakta görünen "Aç →" bağlantısı tabloya götürür.
+5. **Döküm: dipnot `*` işaretleri** hiçbir şeye bağlanmıyor. "Sayılmayanlar" başlığı altında düz liste olur.
+6. **Tarama: ilk ilerleme gelmeden** "— bulundu, yaklaşık 450 MB içinden" kırık gibi okunuyor. İlerleme gelene kadar yalnızca "Tarama başlıyor…" gösterilir. Sonra rakam 28px, yanında "yaklaşık 450 MB içinden". Canlı sayaçlar fişe satır satır yazılır gibi leader satırlarına dönüşür: Dosya ···· 100.092 / Klasör ···· 12 / Süre ···· 7 sn. (DESIGN_MAP leader'ı döküm, sepet ve breadcrumb için sayıyor; tarama ekranına genişletmek küçük bir onay ister, aşağıda B4.)
+7. **Teknik yol önde değil.** Tarama başlığının altındaki mono `/Volumes/CleanyTree` kaldırılır. Birim kartında yalnızca aynı adlı iki birim varsa gösterilir, diğer durumlarda `title` içinde kalır (Audience: teknik ayrıntı arka planda).
+8. **Tablo: genel araç görünümü.**
+   - Ad sütunu sınırlanır, böylece ad ile boyut arasında 300px boşluk kalmaz.
+   - Kart, içeriği kadar uzar.
+   - Genişlik `max-w-240` olur.
+   - Kökte boş breadcrumb `nav`'ı render edilmez.
+   - Sıralama veya klasör değişince eski satırlar korunur ("İçerik okunuyor…" yanıp sönmez).
+9. **Gezinme tek yerde.** Tabloda "< Birimler" ve "< Döküm" alt alta duruyor. Başlık çubuğu tek breadcrumb olur: `Birimler / CleanyTree dökümü / Projeler`, her parça bağlantı. Sayfa içi geri düğmesi kalkar. Aynı başlık döküm ve tarama ekranında da kullanılır.
+10. **Pencere kullanımı.** Döküm dar kalır (fiş dardır). ≥1100px'te iki sütun olur:
+    - solda fiş (~560px);
+    - sağda (~280px) sayılmayanlar dipnotu, tarama istatistiği ve eylemler.
+    Birimler ve tarama ekranlarında üst boşluk `py-16` olur.
+11. **Birim kartı (Moment 1).** Bölünmüş doluluk çubuğu 6px'ten 12px'e çıkar, bölümler arası 2px boşluk olur. Altındaki "Çubuk … bölündü" açıklaması yerine en büyük 3 kalem `text-meta` leader satırı olarak yazılır. "Son tarama: 2 dk önce" eklenir. Birincil eylem, çiftin solunda.
+12. **Tek fiil, tek yazı yüzü.**
+    - Fiiller: "Yeniden tara" her yerde (şu an "Tekrar tara" da var). Tabloya giden eylem TR'de "Tümüne göz at", EN'de "Browse all" olarak tutarlı.
+    - Yazı yüzü: birim kartındaki 28px rakam ve "927 GB / 995 GB" satırı da mono olur, uygulamadaki her bayt değeri tek yüzde.
+13. **Erişilebilirlik ve dayanıklılık** (interface-check, stress-ui):
+    - Breadcrumb, sıralama başlıkları ve `<summary>` için tıklama hedefi ≥24px (`min-h-6`).
+    - Birim düğmelerinin aria-label'ı görünen metinle başlar ("Dökümü aç: CleanyTree").
+    - `aria-live` tüm listeyi değil, yalnızca küçük bir `role="status"` öğesini kapsar.
+    - Tarama ilerlemesi ekran okuyucuya seyrek bir `role="status"` satırıyla duyurulur.
+    - Uzun adlar ortadan kısaltılır (sonu kaybolmasın); tabloda seçili satırın tam adı alt satırda görünür.
+    - Sayfa başlığında yalnızca ad kısaltılır, fiil kalır ("…dökümü").
+    - Adlar `<bdi>` içine alınır.
+    - Dar pencerede/%200 yakınlaştırmada tablo Pay/Dosya/Değiştirilme sütunlarını gizler.
+    - Hata ekranında ham hata metninin üstüne düz bir cümle eklenir.
+
+##### B. Onay gerekenler (token, ortak bileşen veya DESIGN_MAP)
+1. **Leader'ın okunurluğu**: token `1px dotted`. Önerim 2px noktalar, 6px aralık (`radial-gradient` ile, renk ink-3). Ekran görüntüsünde fişin imzası şu an görünmüyor. *Önerim: evet.*
+2. **Ara aralık adımları**: kodda 2px/6px kullanımları var (çubuk yüksekliği, etiket dolgusu). Ya ölçeğe yuvarlanır ya da 2 ve 6 haritaya eklenir. *Önerim: 2'yi ekle (ince çubuk/boşluk), 6'yı yuvarla.*
+3. **Ortak bileşenler** (`ui.tsx`): ShareBar (eşik + yeni yer), LeaderRow, UsageBar değişir. A3, A11 ve B1 bunlara bağlı.
+4. **Leader tarama ekranında**: A6 için Signature satırına "canlı sayaçlar" eklenir. *Önerim: evet, fiş satır satır yazılıyor fikri yönü güçlendiriyor.*
+5. **Birim çubuğunda en büyük bölüme accent**: şu an accent yalnızca dökümdeki en büyük çubukta. *Önerim: hayır, birim kartı sessiz kalsın.*
+6. **%1 altı kalemleri "Diğer"e katlamak** (`.fseventsd`, `.DS_Store` gibi): onaylı "en büyük 12" kuralını değiştirir. *Önerim: hayır. 12 kalsın, A3'teki çubuk eşiği gürültüyü zaten azaltıyor.*
+
+##### C. Cesur fikirler (isteğe bağlı, Fable; bu PR'a girmez)
+- **Döküm fiziksel bir fiş olsun**: ~480px dar kart, üstte ve altta tırtıklı kenar (CSS mask, gradyan yok), başlıkta mono "CleanyTree · 15 Kas 2026 · 7,1 sn". World "paneller nötr kalır" dediği için yön değişikliği sayılır.
+- **Döküm ile tablo tek defter olsun**: klasöre inmek o klasörün fişini yeniden keser, yoğun tablo "N öğenin tümü" modu olur. Signature tabloda leader'ı yasaklıyor, yani yön değişikliği.
+
+##### Uygulama
+- **Dal**: `feat/m2-design-pass`, tek PR.
+- **Dokunulacak dosyalar**: `screens/{Summary,Scanning,Volumes,Browse,Ended}.tsx`, `components/ui.tsx`, `index.css` (yalnızca B onaylanırsa), `App.tsx` (başlık breadcrumb), `lib/i18n.ts`, `store.ts` (döküm açılım durumu korunur), `DESIGN_MAP.md` (B onaylarını kaydetmek için), `src-tauri/tauri.conf.json`.
+- **Rust**: değişiklik yok.
+- **Doğrulama**: typecheck, lint, build, cargo zinciri. Paketli uygulamada koyu+açık, TR+EN ekran görüntüleri ve önce/sonra karşılaştırması. Klavyeyle tam tur. Uzun ad ve 100k klasörüyle stres. Ardından `/slop-audit` tekrar.
+
+#### PR 4 planı (`feat/m2-tree-table`, Notion #21)
+- **Giriş noktası**: dökümde bir kalemin adına tıklanınca ağaç tablo o klasörde açılır. "Tümüne göz at" bağlantısı tabloyu kökte açar. Döküm Moment 2 olarak yerinde kalır, tablo dökümün yerine geçmez. Yeni bir ekran türü eklenir: `{ kind: 'browse'; done: DoneScreen; node; sort; order }`. Geri dönüşte döküm açılır.
+- **Breadcrumb**: `getAncestors` ile kökten seçili klasöre kadar parçalar, en sonda toplam (DESIGN_MAP: leader çizgisi breadcrumb toplamında kullanılır). Her parça tıklanabilir.
+- **Tablo**: sütunlar Ad · Boyut (allocated) · Pay (üst klasöre göre) · Dosya · Değiştirilme. Satır yüksekliği 32px. Rakamlar sağa hizalı, `tabular-nums` ve mono. Leader yok. Başlığa tıklanınca o sütuna göre sıralanır (ikinci tıklama yönü çevirir). Sıralama `aria-sort` ile duyurulur.
+- **Sanal liste**: satırlar 32px sabit olduğu için pencereleme elle yazılır: `scrollTop / 32` aralığı ve ±10 satır tampon. **Bağımlılık eklenmez.** Satırlar 200'lük sayfalar halinde, görünür aralık geldikçe `getChildren` ile alınır. Önbellek klasör + sıralama ile anahtarlanır, sıralama değişince sıfırlanır.
+- **Gezinme**: tek tık ya da Enter klasörün içine girer (ADR-0004). Dosyalar seçilir ama içine girilmez. Klavye: ↑/↓ satır, Home/End, PageUp/PageDown, Enter/→ içine gir, Backspace/← üst klasör, Esc dökümüne dön. Tablo ARIA `grid` değil, `aria-activedescendant` kullanan bir `listbox`/`table` olur. Odak halkası görünür.
+- **Durumlar**: yükleniyor, hata, boş klasör ve `StaleScan` (yeni tarama başladıysa birimlere döner). 100k çocuklu bir klasörde kaydırmanın akıcı olduğu gerçek uygulamada kontrol edilir.
+- **Dokunulacak dosyalar**: `store.ts` (browse ekranı), `screens/Browse.tsx` (yeni), `screens/Summary.tsx` (giriş bağlantıları), `App.tsx` (yönlendirme), `lib/i18n.ts` (TR/EN anahtarları), `lib/format.ts` (tarih biçimi). Rust tarafında değişiklik yok.
+- **Doğrulama**: typecheck/lint/build, cargo zinciri, paketli uygulamada açık+koyu ekran görüntüsü, klavyeyle gezinme ve 100k çocuklu bir test klasörü.
+
+Sorular:
+1. `@tanstack/react-virtual` yerine elle pencereleme (önerim: satırlar sabit 32px olduğu için ~40 satır kod yeter, bağımlılık gerekmez)?
+2. Giriş noktası olarak dökümden tıklama ve "Tümüne göz at" uygun mu? Yoksa tablo, tarama bitince doğrudan dökümün altında mı gösterilsin?
 
 #### Open Questions
 _2026-11-14: 1 → yön A; 2 → `sysinfo`, `zustand` onaylandı, `tauri-specta` alınmadı; 3, 4 cevaplandı (bkz. Kararlar)._
