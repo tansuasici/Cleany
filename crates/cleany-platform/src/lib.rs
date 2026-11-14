@@ -1,9 +1,11 @@
-//! Platform layer: OS detection and raw entry metadata; fast scan paths,
+//! Platform layer: OS detection, raw entry metadata and volume listing; fast scan paths,
 //! trash and reveal come later (M7+).
 
 pub mod meta;
+pub mod volumes;
 
 pub use meta::{EntryKind, EntryMeta, read_entry_meta, read_meta};
+pub use volumes::{Volume, list_volumes};
 
 use serde::Serialize;
 

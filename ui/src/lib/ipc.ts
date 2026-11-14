@@ -1,8 +1,9 @@
 import { Channel, invoke } from '@tauri-apps/api/core'
 
-// Hand-written mirror of the serialized types in src-tauri/src/lib.rs and
-// src-tauri/src/session.rs. The `ipc_ts_mentions_every_serialized_key` Rust
-// test fails when a key or tag here drifts from the backend.
+// Hand-written mirror of the serialized types in src-tauri/src/lib.rs,
+// src-tauri/src/session.rs and src-tauri/src/volumes.rs. The
+// `ipc_ts_mentions_every_serialized_key` and `ipc_ts_mentions_every_volume_key`
+// Rust tests fail when a key or tag here drifts from the backend.
 
 export interface AppInfo {
   name: string
@@ -12,6 +13,20 @@ export interface AppInfo {
 }
 
 export const getAppInfo = () => invoke<AppInfo>('app_info')
+
+/** A mounted volume; pass `mount` to `startScan` to scan it. */
+export interface VolumeEntry {
+  mount: string
+  name: string
+  /** Capacity in bytes. */
+  total: number
+  /** Bytes available to the current user. */
+  available: number
+  removable: boolean
+}
+
+/** Mounted volumes, sorted by mount point. */
+export const listVolumes = () => invoke<VolumeEntry[]>('list_volumes')
 
 /** Identifies one scan; a newer scan makes older ids stale. */
 export type ScanId = number

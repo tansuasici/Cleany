@@ -10,6 +10,7 @@ authors.workspace = true
 
 [dependencies]
 serde.workspace = true
+sysinfo = { version = "0.38", default-features = false, features = ["disk"] }
 
 [target.'cfg(windows)'.dependencies]
 filesize = "0.2.0"

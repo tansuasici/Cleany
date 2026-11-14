@@ -1,6 +1,7 @@
 //! Tauri shell for Cleany. Commands here stay thin; logic lives in `cleany-core`.
 
 mod session;
+mod volumes;
 
 use std::path::PathBuf;
 
@@ -11,6 +12,7 @@ use tauri::ipc::Channel;
 use session::{
     ChildrenPage, NodeEntry, ScanEvent, ScanId, SessionError, Sessions, SortKey, SortOrder,
 };
+use volumes::VolumeEntry;
 
 /// Basic build/runtime info shown in the UI shell. Mirrors `AppInfo` in `ui/src/lib/ipc.ts`.
 #[derive(Debug, Serialize)]
@@ -29,6 +31,12 @@ fn app_info() -> AppInfo {
         os: cleany_platform::Os::current().as_str(),
         arch: std::env::consts::ARCH,
     }
+}
+
+/// Mounted volumes the user can scan, sorted by mount point.
+#[tauri::command(async)]
+fn list_volumes() -> Vec<VolumeEntry> {
+    volumes::list()
 }
 
 /// Starts scanning `path`, replacing (and cancelling) any previous scan.
@@ -89,6 +97,7 @@ pub fn run() {
         .manage(Sessions::default())
         .invoke_handler(tauri::generate_handler![
             app_info,
+            list_volumes,
             start_scan,
             cancel_scan,
             get_children,
