@@ -66,6 +66,8 @@ _2026-11-14: Plan, bağımlılıklar ve Windows **A seçeneği** onaylandı._
 
 #### Not Now
 - getattrlistbulk / statx / MFT hızlı yolları (M7), Tauri komutları (M2).
+- `cleany scan` Ctrl-C ile iptal: sinyal yakalamak için yeni bağımlılık (`ctrlc`) ya da `unsafe` gerekir; M2'de UI iptali ile birlikte ele alınacak.
+- `~/Library` taraması 71 sn sürdü (%100 CPU, ağırlıklı sistem zamanı). Muhtemel sebep iCloud/FileProvider dizinleri; PR 4'teki bulut yer tutucu algılamasından sonra yeniden ölçülecek.
 
 ---
 
@@ -80,4 +82,3 @@ _2026-11-14: Plan, bağımlılıklar ve Windows **A seçeneği** onaylandı._
 ## Not Now
 
 Parked scope — deferred work, revisit when prioritized. (CLAUDE.md → Scope Discipline routes out-of-scope items here.)
-- `src-tauri` paketi ile CLI binary'si ikisi de `cleany` adını taşıyor ve `target/release/cleany` çakışıyor (M0'dan kalma). PR 3'ten önce çözülmeli: ya Tauri bin'i yeniden adlandırılır ya CLI'ya `default-run` verilir.
