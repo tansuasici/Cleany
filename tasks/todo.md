@@ -56,10 +56,13 @@ UI birim testi için test runner (vitest) **eklenmiyor**; ihtiyaç doğarsa ayr�
 - Plan onaylandı. Core API eki `Tree::node_id` onaylandı.
 - `tauri-specta` hâlâ RC (2.0.0-rc.29). Bu yüzden TS tipleri elle yazıldı (`ui/src/lib/ipc.ts`). Sözleşme kayması `ipc_ts_mentions_every_serialized_key` testiyle yakalanır; testin, yeniden adlandırılan bir anahtarı yakaladığı doğrulandı.
 - CLI Ctrl-C tekrar Not Now'a alındı. shadcn M2'de eklenmiyor. UI PR'larından (3–5) önce `/design-brief` + `/direction` çalıştırılacak.
+- PR 2 için `sysinfo` onaylandı (yalnızca `disk` özelliği). 0.39+ MSRV 1.95 istiyor, workspace 1.90'a sabit. Bu yüzden `0.38` (MSRV 1.88) kullanılıyor.
+- macOS'ta `/System/Volumes/*` bağlama noktaları listede gizlenir (Finder da gizler). Kullanıcı yalnızca "Macintosh HD" (`/`) görür.
 
 #### Durum
 - [x] PR 1 `feat(app): scan session IPC`: branch `feat/m2-scan-ipc`, PR açıldı, incelemede.
-- [ ] PR 2–5
+- [x] PR 2 `feat(platform): volume list`: branch `feat/m2-volume-list` (PR 1'in üstüne kurulu), PR açıldı, incelemede.
+- [ ] PR 3–5
 
 #### Open Questions
 1. **Tasarım yönü (bloklayıcı)**: UI PR'larından (3–5) önce `ui/` içinde `/design-brief` + `/direction` çalıştırılıp yön onaylansın mı (önerim)? Alternatif: UI'yi nötr, yer tutucu stille kurup yönü sonra uygulamak. Bu durumda `ui/CLAUDE.md` kuralı bilerek esnetilmiş olur. PR 1 ve 2 bu cevabı beklemeden başlayabilir.
@@ -83,6 +86,7 @@ UI birim testi için test runner (vitest) **eklenmiyor**; ihtiyaç doğarsa ayr�
 #### Not Now
 - Treemap, breakdown, top files, arama, reveal/open/trash/delete (M3+, PLAN §3.4).
 - Birden fazla eşzamanlı tarama/sekme.
+- **macOS'ta `/` taraması Data birimini iki kez sayabilir**: `/`, `/Users` ve `/System/Volumes/Data` aynı `dev` değerini döndürüyor (APFS volume group). `cross_mounts=false` sınırı bu yüzden durmuyor. `/Users` firmlink üzerinden bir kez, `/System/Volumes/Data/Users` üzerinden bir kez daha yürünür. Çözüm core tarayıcıda olmalı (kök `/` iken `/System/Volumes/Data` atlanmalı). Ölçülüp doğrulanmadı.
 
 ---
 
