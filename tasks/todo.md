@@ -99,7 +99,6 @@ _2026-11-14: 1 → yön A; 2 → `sysinfo`, `zustand` onaylandı, `tauri-specta`
 - Birden fazla eşzamanlı tarama/sekme.
 - **Tarama sonucu kalıcı değil**: her tarama sıfırdan yürür; sonuç yalnızca oturum belleğinde (tek ağaç). Son taramayı diske yazıp açılışta göstermek ve FSEvents (macOS) / USN günlüğü (Windows) ile artımlı güncelleme yapmak ayrı bir iş (M7 hızlı yollarla birlikte ya da sonrası).
 - **macOS'ta `/` taraması Data birimini iki kez sayabilir**: `/`, `/Users` ve `/System/Volumes/Data` aynı `dev` değerini döndürüyor (APFS volume group). `cross_mounts=false` sınırı bu yüzden durmuyor. `/Users` firmlink üzerinden bir kez, `/System/Volumes/Data/Users` üzerinden bir kez daha yürünür. Çözüm core tarayıcıda olmalı (kök `/` iken `/System/Volumes/Data` atlanmalı). Ölçülüp doğrulanmadı.
-- **İptal, `opendir`'de takılan işçiyi bekliyor**: core `scan()` iptalden sonra tüm uçuştaki işçileri boşaltmadan `Cancelled` dönmüyor. Paketli uygulamada `/` taraması sırasında işçiler `opendir`'de bloklandı (büyük olasılıkla macOS gizlilik/TCC istemi) ve `cancelled` olayı hiç gelmedi, ekran "taranıyor"da kaldı (2026-11-14, `sample` ile görüldü). Çözüm core'da: iptal görülünce boşaltmayı beklemeden dön (işçiler yalnızca `tx`/`cancel` klonu tutuyor). FDA onboarding (#22) ile birlikte ele alınmalı.
 
 ---
 
