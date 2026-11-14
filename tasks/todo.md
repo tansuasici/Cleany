@@ -61,7 +61,8 @@ UI birim testi için test runner (vitest) **eklenmiyor**; ihtiyaç doğarsa ayr�
 
 #### Durum
 - [x] PR 1 `feat(app): scan session IPC`: #9 merge edildi.
-- [x] PR 2 `feat(platform): volume list`: branch `feat/m2-volume-list`, PR açıldı, incelemede.
+- [x] PR 2 `feat(platform): volume list`: #10 merge edildi.
+- [x] Tasarım yönü: `/design-brief` + `/direction` tamam, yön A "Döküm fişi" onaylandı (ui/DESIGN_MAP.md).
 - [ ] PR 3–5
 
 #### Open Questions
