@@ -58,14 +58,24 @@ UI birim testi için test runner (vitest) **eklenmiyor**; ihtiyaç doğarsa ayr�
 - CLI Ctrl-C tekrar Not Now'a alındı. shadcn M2'de eklenmiyor. UI PR'larından (3–5) önce `/design-brief` + `/direction` çalıştırılacak.
 - PR 2 için `sysinfo` onaylandı (yalnızca `disk` özelliği). 0.39+ MSRV 1.95 istiyor, workspace 1.90'a sabit. Bu yüzden `0.38` (MSRV 1.88) kullanılıyor.
 - macOS'ta `/System/Volumes/*` bağlama noktaları listede gizlenir (Finder da gizler). Kullanıcı yalnızca "Macintosh HD" (`/`) görür.
+- Tasarım yönü A "Döküm fişi" onaylandı. PR 3 için `zustand` onaylandı. Erişilebilirlik hedefi WCAG 2.1 AA.
+
+#### PR 3 planı (`feat/m2-ui-shell`)
+- **Tokenlar** `ui/src/index.css` içinde CSS değişkeni olarak (DESIGN_MAP → Tokens). Tema `prefers-color-scheme` ile gelir; `<html data-theme>` ile zorlanabilir (koyu ekran görüntüsü için).
+- **Durum** `ui/src/store.ts` (zustand): ekran ayrık bir birleşimdir: `volumes | scanning | done | cancelled | failed`. Eski taramanın olayları nesil sayacıyla yok sayılır.
+- **i18n** `ui/src/lib/i18n.ts`: tipli TR/EN sözlük, `t()`; EN'de eksik anahtar `tsc` hatasıdır. Dil sistemden gelir, başlıktaki düğmeyle değişir.
+- **Biçim** `ui/src/lib/format.ts`: boyutlar ondalık birimle (1 GB = 10⁹ bayt, Finder gibi), sayılar ve süre `Intl` ile yerele göre.
+- **Ekranlar**: birim kartları (doluluk çubuğu; tarama bitince en büyük kalemlere bölünür), canlı sayaçlar + iptal (Esc), döküm (en büyük 5 kalem, diğerleri, toplam, sayılmayanlar dipnotu). Klasör seçici yok (dialog eklentisi gerekir); ağaç tablo PR 4.
 
 #### Durum
 - [x] PR 1 `feat(app): scan session IPC`: #9 merge edildi.
 - [x] PR 2 `feat(platform): volume list`: #10 merge edildi.
 - [x] Tasarım yönü: `/design-brief` + `/direction` tamam, yön A "Döküm fişi" onaylandı (ui/DESIGN_MAP.md).
-- [ ] PR 3–5
+- [ ] PR 3 `feat(ui): shell, volumes, scan screen`: devam ediyor.
+- [ ] PR 4–5
 
 #### Open Questions
+_2026-11-14: 1 → yön A; 2 → `sysinfo`, `zustand` onaylandı, `tauri-specta` alınmadı; 3, 4 cevaplandı (bkz. Kararlar)._
 1. **Tasarım yönü (bloklayıcı)**: UI PR'larından (3–5) önce `ui/` içinde `/design-brief` + `/direction` çalıştırılıp yön onaylansın mı (önerim)? Alternatif: UI'yi nötr, yer tutucu stille kurup yönü sonra uygulamak. Bu durumda `ui/CLAUDE.md` kuralı bilerek esnetilmiş olur. PR 1 ve 2 bu cevabı beklemeden başlayabilir.
 2. **Bağımlılıklar** (tümü korumalı değişiklik):
    | Bağımlılık | Neden | Alternatif |
@@ -87,7 +97,9 @@ UI birim testi için test runner (vitest) **eklenmiyor**; ihtiyaç doğarsa ayr�
 #### Not Now
 - Treemap, breakdown, top files, arama, reveal/open/trash/delete (M3+, PLAN §3.4).
 - Birden fazla eşzamanlı tarama/sekme.
+- **Tarama sonucu kalıcı değil**: her tarama sıfırdan yürür; sonuç yalnızca oturum belleğinde (tek ağaç). Son taramayı diske yazıp açılışta göstermek ve FSEvents (macOS) / USN günlüğü (Windows) ile artımlı güncelleme yapmak ayrı bir iş (M7 hızlı yollarla birlikte ya da sonrası).
 - **macOS'ta `/` taraması Data birimini iki kez sayabilir**: `/`, `/Users` ve `/System/Volumes/Data` aynı `dev` değerini döndürüyor (APFS volume group). `cross_mounts=false` sınırı bu yüzden durmuyor. `/Users` firmlink üzerinden bir kez, `/System/Volumes/Data/Users` üzerinden bir kez daha yürünür. Çözüm core tarayıcıda olmalı (kök `/` iken `/System/Volumes/Data` atlanmalı). Ölçülüp doğrulanmadı.
+- **İptal, `opendir`'de takılan işçiyi bekliyor**: core `scan()` iptalden sonra tüm uçuştaki işçileri boşaltmadan `Cancelled` dönmüyor. Paketli uygulamada `/` taraması sırasında işçiler `opendir`'de bloklandı (büyük olasılıkla macOS gizlilik/TCC istemi) ve `cancelled` olayı hiç gelmedi, ekran "taranıyor"da kaldı (2026-11-14, `sample` ile görüldü). Çözüm core'da: iptal görülünce boşaltmayı beklemeden dön (işçiler yalnızca `tx`/`cancel` klonu tutuyor). FDA onboarding (#22) ile birlikte ele alınmalı.
 
 ---
 
