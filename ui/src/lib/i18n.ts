@@ -29,6 +29,13 @@ const tr = {
   'volumes.rescan': 'Yeniden tara',
   'volumes.rescanLabel': (p: { name: string }) => `Yeniden tara: ${p.name}`,
   'volumes.lastScan': (p: { ago: string }) => `Son tarama: ${p.ago}. Çubuk en büyük kalemlere göre bölündü.`,
+  'access.title': 'Tam Disk Erişimi verilmedi',
+  'access.body':
+    'macOS bazı klasörleri (Mail, Safari, başka uygulamaların verileri) Cleany’ye kapalı tutuyor. Tarama yine çalışır, ama bu klasörler toplama girmez.',
+  'access.steps': 'Sistem Ayarları’nda Cleany’yi Tam Disk Erişimi listesinde açık konuma getir. macOS uygulamayı yeniden açmanı isteyebilir.',
+  'access.open': 'Sistem Ayarları’nı aç',
+  'access.dismiss': 'Şimdilik geç',
+  'access.openError': 'Sistem Ayarları açılamadı. Gizlilik ve Güvenlik → Tam Disk Erişimi bölmesine elle gidebilirsin.',
 
   'scan.title': (p: { name: string }) => `${p.name} taranıyor`,
   'scan.foundOf': (p: { used: string }) => `yaklaşık ${p.used} içinden`,
@@ -67,6 +74,7 @@ const tr = {
     `${p.n} başka birim (bağlama noktası) bu taramanın dışında bırakıldı.`,
   'summary.unreadable': (p: Count) => `${p.n} öğe okunamadı.`,
   'summary.unreadableShow': (p: Count) => `İlk ${p.n} tanesini göster`,
+  'summary.noAccess': 'Tam Disk Erişimi olmadan korumalı klasörler okunamıyor.',
   'summary.stats': (p: { files: string; dirs: string; elapsed: string }) =>
     `${p.files} dosya ve ${p.dirs} klasör ${p.elapsed} içinde tarandı.`,
   'summary.browseAll': 'Tümüne göz at',
@@ -124,6 +132,13 @@ const en: Dict = {
   'volumes.rescan': 'Scan again',
   'volumes.rescanLabel': (p) => `Scan again: ${p.name}`,
   'volumes.lastScan': (p) => `Last scan: ${p.ago}. The bar is split by the largest items.`,
+  'access.title': 'Full Disk Access is off',
+  'access.body':
+    'macOS keeps some folders (Mail, Safari, other apps’ data) closed to Cleany. Scans still run, but those folders are left out of the total.',
+  'access.steps': 'In System Settings, turn Cleany on in the Full Disk Access list. macOS may ask you to reopen the app.',
+  'access.open': 'Open System Settings',
+  'access.dismiss': 'Not now',
+  'access.openError': 'Could not open System Settings. Go to Privacy & Security → Full Disk Access yourself.',
 
   'scan.title': (p) => `Scanning ${p.name}`,
   'scan.foundOf': (p) => `of roughly ${p.used}`,
@@ -161,6 +176,7 @@ const en: Dict = {
   'summary.skippedMounts': (p) => `${p.n} ${volumes(p.count)} left out of this scan.`,
   'summary.unreadable': (p) => `${p.n} ${entries(p.count)} could not be read.`,
   'summary.unreadableShow': (p) => `Show the first ${p.n}`,
+  'summary.noAccess': 'Without Full Disk Access, protected folders cannot be read.',
   'summary.stats': (p) => `${p.files} files and ${p.dirs} folders scanned in ${p.elapsed}.`,
   'summary.browseAll': 'Browse all',
   'summary.open': 'Open',

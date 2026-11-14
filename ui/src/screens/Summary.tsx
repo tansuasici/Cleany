@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Button, ChevronIcon, LeaderRow, NAME, Named, ShareBar } from '../components/ui'
 import { formatBytes, formatCount, formatDuration, formatShare, truncateMiddle } from '../lib/format'
-import { type NodeEntry, type ScanId, getChildren } from '../lib/ipc'
+import { type NodeEntry, type ScanId, getChildren, openDiskAccessSettings } from '../lib/ipc'
 import { type DoneScreen, useStore } from '../store'
 import { useT } from '../useT'
 
@@ -22,6 +22,7 @@ export function SummaryScreen({ screen }: Props) {
   const { t, locale } = useT()
   const scan = useStore((s) => s.scan)
   const browse = useStore((s) => s.browse)
+  const noAccess = useStore((s) => s.access === 'denied')
   const { target, summary, top } = screen
   const { root, stats, issues, issueCount } = summary
   const bytes = (n: number) => formatBytes(n, locale)
@@ -110,6 +111,18 @@ export function SummaryScreen({ screen }: Props) {
               {issueCount > 0 && (
                 <li>
                   <span>{t('summary.unreadable', count(issueCount))}</span>
+                  {noAccess && (
+                    <p className="mt-1">
+                      {t('summary.noAccess')}{' '}
+                      <button
+                        type="button"
+                        onClick={() => void openDiskAccessSettings().catch(() => undefined)}
+                        className="rounded-tag text-ink underline underline-offset-2 hover:text-ink-2"
+                      >
+                        {t('access.open')}
+                      </button>
+                    </p>
+                  )}
                   {issues.length > 0 && (
                     <details className="mt-1">
                       <summary className="flex min-h-6 w-fit cursor-pointer items-center rounded-tag text-ink-2 hover:text-ink">

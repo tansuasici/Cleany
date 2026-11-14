@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Button, LeaderRow, RemovableIcon, UsageBar, VolumeIcon } from '../components/ui'
 import { formatAgo, formatBytes, truncateMiddle } from '../lib/format'
-import type { VolumeEntry } from '../lib/ipc'
+import { type VolumeEntry, openDiskAccessSettings } from '../lib/ipc'
 import { useStore } from '../store'
 import { useT } from '../useT'
 
@@ -27,6 +27,8 @@ export function VolumesScreen() {
         {t('volumes.title')}
       </h1>
       <p className="mt-1 text-ink-2">{t('volumes.lede')}</p>
+
+      <AccessPanel />
 
       <div className="mt-8">
         {volumes.status === 'loading' && (
@@ -59,6 +61,48 @@ export function VolumesScreen() {
           </ul>
         )}
       </div>
+    </section>
+  )
+}
+
+/**
+ * Shown only when macOS refused a protected file: says what a scan will leave
+ * out and opens the settings pane. Never blocks scanning; `unknown` shows
+ * nothing, so a wrong guess does not nag.
+ */
+function AccessPanel() {
+  const { t } = useT()
+  const show = useStore((s) => s.access === 'denied' && !s.accessDismissed)
+  const dismiss = useStore((s) => s.dismissAccess)
+  const [failed, setFailed] = useState(false)
+  if (!show) return null
+  const open = () => {
+    setFailed(false)
+    openDiskAccessSettings().catch(() => setFailed(true))
+  }
+
+  return (
+    <section aria-labelledby="access-title" className="mt-8 rounded-panel border border-hairline bg-card p-6">
+      <h2 id="access-title" className="text-strong font-medium">
+        {t('access.title')}
+      </h2>
+      <p className="mt-1 max-w-150 text-ink-2">{t('access.body')}</p>
+      <p className="mt-2 max-w-150 text-secondary text-ink-2">{t('access.steps')}</p>
+      <div className="mt-4 flex items-center gap-3">
+        <Button onClick={open}>{t('access.open')}</Button>
+        <button
+          type="button"
+          onClick={dismiss}
+          className="h-8 rounded-control px-2 text-body text-ink-2 transition-[background-color] duration-150 ease-out hover:bg-raised hover:text-ink"
+        >
+          {t('access.dismiss')}
+        </button>
+      </div>
+      {failed && (
+        <p role="alert" className="mt-3 text-secondary text-ink-2">
+          {t('access.openError')}
+        </p>
+      )}
     </section>
   )
 }

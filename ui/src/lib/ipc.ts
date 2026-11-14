@@ -1,9 +1,10 @@
 import { Channel, invoke } from '@tauri-apps/api/core'
 
 // Hand-written mirror of the serialized types in src-tauri/src/lib.rs,
-// src-tauri/src/session.rs and src-tauri/src/volumes.rs. The
-// `ipc_ts_mentions_every_serialized_key` and `ipc_ts_mentions_every_volume_key`
-// Rust tests fail when a key or tag here drifts from the backend.
+// src-tauri/src/session.rs, src-tauri/src/volumes.rs and src-tauri/src/access.rs.
+// The `ipc_ts_mentions_every_serialized_key`, `ipc_ts_mentions_every_volume_key`
+// and `ipc_ts_mentions_every_access_tag` Rust tests fail when a key or tag here
+// drifts from the backend.
 
 export interface AppInfo {
   name: string
@@ -124,3 +125,17 @@ export const getChildren = (
 
 export const getAncestors = (scan: ScanId, node: number) =>
   invoke<NodeEntry[]>('get_ancestors', { scan, node })
+
+/**
+ * Whether macOS lets the app read protected folders (Mail, Safari, other
+ * apps' data). A best-effort check: `unknown` when it cannot tell.
+ */
+export type DiskAccess = 'granted' | 'denied' | 'unknown' | 'notApplicable'
+
+/** Rejection value of `openDiskAccessSettings`. */
+export type AccessError = { kind: 'unsupported' } | { kind: 'launch'; message: string }
+
+export const getDiskAccess = () => invoke<DiskAccess>('disk_access')
+
+/** Opens System Settings at Privacy & Security → Full Disk Access. */
+export const openDiskAccessSettings = () => invoke<void>('open_disk_access_settings')
