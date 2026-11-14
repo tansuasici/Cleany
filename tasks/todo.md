@@ -21,8 +21,8 @@ Give the task you are actively working on an `h3` heading under **In Progress** 
 | 1 `feat(core): arena tree` | #8, #10 | `Tree`/`Node`/`NodeId`, ad havuzu, alt→üst toplama, `Size` (logical/allocated), ADR-0005 (crate yönü) | core: `thiserror` (workspace'te zaten var) |
 | 2 `feat(core): parallel scanner` | #9, #12, #14 | rayon havuzu, iptal, ≤10 Hz ilerleme, symlink/junction takip yok, mount sınırı, izin reddi listesi, OsString; seri referans yürüyücü + fikstürler; platform: std'den `EntryMeta` | core: `rayon`; dev: `tempfile` |
 | 3 `feat(cli): cleany scan` | #15, #16 | `cleany scan <yol> [--json] [--cross-mounts]` (argümanlar elle parse edilir), `du` karşılaştırma testi | cli: `serde_json` (workspace'te var) |
-| 4 `feat(platform): hardlinks + cloud` ✅ PR açıldı | #11, #13 | (dev,inode)/FileId tekilleştirme, iCloud/OneDrive yer tutucu algılama, Windows allocated boyut | Windows'a özel: aşağıdaki A/B seçeneğine göre |
-| 5 `perf: bench` | #17 | criterion, sentetik 1M ağaç, tepe RSS ölçümü | dev: `criterion` |
+| 4 `feat(platform): hardlinks + cloud` ✅ #7 | #11, #13 | (dev,inode)/FileId tekilleştirme, iCloud/OneDrive yer tutucu algılama, Windows allocated boyut | Windows'a özel: aşağıdaki A/B seçeneğine göre |
+| 5 `perf: bench` ✅ PR açıldı | #17 | criterion, sentetik 1M ağaç, tepe RSS ölçümü | dev: `criterion` |
 
 #### Tasarım kararları
 - **Crate yönü**: `cleany-core → cleany-platform`. Platform, ham `u64`'lerle `EntryMeta { kind, logical, allocated, dev, file_id, nlink, mtime, flags }` döndürür. `Size`, ağaç ve tarayıcı core'da kalır. ADR-0005 olarak yazılır.
@@ -50,7 +50,7 @@ Give the task you are actively working on an `h3` heading under **In Progress** 
 | `hardlinks_counted_once_deterministically` | tekilleştirme | hepsi (Windows `fs::hard_link`) |
 | `placeholder_flags_classified` | bulut | macos + windows (ham değerler) |
 | `du_total_matches_within_1_percent` | referans | unix, integration (`cargo test` içinde, CI dosyası değişmez) |
-| RSS kontrolü (1M ağaç) | <150 MB | PR 5'te bench ile manuel/ölçüm notu |
+| RSS kontrolü (1M dosya) | <150 MB → ölçülen 58–64 MiB (docs/PERF.md) | manuel, release CLI + `/usr/bin/time` |
 
 #### Open Questions
 _2026-11-14: Plan, bağımlılıklar ve Windows **A seçeneği** onaylandı._
@@ -67,7 +67,7 @@ _2026-11-14: Plan, bağımlılıklar ve Windows **A seçeneği** onaylandı._
 #### Not Now
 - getattrlistbulk / statx / MFT hızlı yolları (M7), Tauri komutları (M2).
 - `cleany scan` Ctrl-C ile iptal: sinyal yakalamak için yeni bağımlılık (`ctrlc`) ya da `unsafe` gerekir; M2'de UI iptali ile birlikte ele alınacak.
-- `~/Library` taraması 71 sn sürdü; PR 4'teki yer tutucu algılamasından sonra 26 sn (hâlâ ağırlıklı sistem zamanı, %282 CPU). Kalan maliyet PR 5'teki bench ile profillenecek.
+- `~/Library` taraması 71 sn sürdü; PR 4'teki yer tutucu algılamasından sonra 26 sn (hâlâ ağırlıklı sistem zamanı, %282 CPU). 1M dosyalık ölçümde de süre çekirdekte (`readdir`/`lstat`) geçiyor (docs/PERF.md); M7 hızlı yolları ele alacak.
 
 ---
 
