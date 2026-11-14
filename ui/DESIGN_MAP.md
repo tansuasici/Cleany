@@ -76,3 +76,4 @@ Adla boyutu birbirine bağlayan **noktalı çizgi**: `Belgeler ········�
 <Corrections that should hold in future sessions. Add one each time the user says "this isn't us".>
 - Korkutma ve satış tonu yok: "diskin tehlikede!" alarmları, kırmızı uyarı yağmuru, upsell yok (2026-11-14, kullanıcı).
 - Renkli gradyan ve glow efekti yok (2026-11-14, kullanıcı).
+- Satırda, kartta ya da mesajda soldan renkli şerit yok (`border-l-2`, inset accent çubuğu). Seçim yüzey adımıyla (`bg-raised`), vurgu tam hairline kenarlıkla verilir (2026-11-15, kullanıcı).
