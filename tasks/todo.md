@@ -42,10 +42,15 @@ Give the task you are actively working on an `h3` heading under **In Progress** 
 - `get_treemap_rejects_stale_scan_and_unknown_node` (session).
 - `ipc_ts_mentions_every_serialized_key` yeni anahtarları kapsar.
 
-#### PR 7 (#24) için ön not — ayrıca onaylanacak
-- `ui/CLAUDE.md` gereği önce `/direction` adımı: blok renkleri (öneri: kind'a göre değil, derinliğe göre ink tonları + en büyük blok için mevcut accent; gökkuşağı palet yok) ve görünümün yeri (öneri: Browse ekranında Tablo / Harita anahtarı). Kod yazmadan bu ikisi için onay istenir.
-- Canvas: `devicePixelRatio` ölçekli, `ResizeObserver` ile yeniden istek (debounce), hover'da hit-test düz listede ters sırayla. Klavye: hücreler arasında ok tuşları, Enter içine girer, Escape/Backspace üst klasör. Ekran okuyucu için görünmez bir liste (ilk 20 hücre).
-- Hareket: içine girerken animasyon yok (M3'te), `prefers-reduced-motion` zaten sorun değil.
+#### PR 7 (#24) planı — onaylandı 2026-11-15 (`feat/m3-treemap-ui`)
+- **Yön (onaylı)**: blok renkleri kind'a göre değil, derinliğe göre yarı saydam ink tonları (üst üste binince koyulaşır); en büyük blok accent ile tonlanır, gökkuşağı yok. Görünüm Browse ekranında Tablo / Harita anahtarıyla seçilir (seçim tarayıcıda hatırlanır).
+- **Dosyalar**: `ui/src/screens/Treemap.tsx` (yeni: canvas, hover kartı, klavye, gizli liste), `ui/src/screens/Browse.tsx` (anahtar + görünüm seçimi), `ui/src/lib/i18n.ts` (TR/EN metinler). IPC, Rust, token değişikliği yok.
+- **Çizim**: `devicePixelRatio` ölçekli canvas; `ResizeObserver` + 120 ms debounce ile `getTreemap(scan, node, w, h, 2, 24)`; eski yanıtlar düşer. Hücreler `Math.round` ile hizalanır, kardeşler arasında 1 px boşluk kalır. Ad + boyut yalnızca yeterince büyük 1. seviye bloklara yazılır. Renkler CSS değişkenlerinden okunur, tema değişince yeniden çizilir.
+- **Etkileşim**: tıklama, imlecin altındaki 1. seviye klasöre girer. Seçili blok accent çerçeve alır. Hover kartı en derindeki hücreyi gösterir (ad, boyut, pay; "Diğer N öğe"). İçine girerken çocuğun dilimi önceden istenir, `browse(slice.node)` aynı dilimi yeniden kullanır (çift istek yok).
+- **Klavye**: oklar 1. seviye bloklar arasında yöne göre gezer, Enter içine girer, Backspace üst klasör, Esc döküme döner (tablo ile aynı). Üst klasöre çıkınca gelinen blok seçili gelir.
+- **Erişilebilirlik**: odaklanabilir `listbox`, 1. seviye bloklar görünmez `option` olarak (aria-activedescendant); canvas `aria-hidden`.
+- **Durumlar**: yükleniyor (250 ms gecikmeli), hata + yeniden dene, boş klasör.
+- **Doğrulama**: `pnpm --dir ui typecheck/lint/build`; 375/768/1280 × açık/koyu ekran görüntüsü; klavye; `/slop-audit`.
 
 #### Açık sorular
 - Varsayılan `minArea` ve `depth`: öneri 24 px² ve 2 seviye; #27 benchmark'ı sonrası ayarlanır.

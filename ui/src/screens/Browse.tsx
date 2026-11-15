@@ -9,7 +9,9 @@ import {
   getChildren,
 } from '../lib/ipc'
 import { type BrowseScreen, useStore } from '../store'
+import { Treemap } from './Treemap'
 import { useT } from '../useT'
+import { useLater } from '../useLater'
 import { useTrail } from '../useTrail'
 
 /** DESIGN_MAP → Spacing: a tree table row is 32 tall. */
@@ -29,6 +31,18 @@ const NAME_CHARS = 64
 /** The loading line waits this long, so a quick folder change doesn't flash it. */
 const LOADING_DELAY_MS = 250
 
+type View = 'table' | 'map'
+const VIEW_KEY = 'cleany.browseView'
+
+function initialView(): View {
+  try {
+    return localStorage.getItem(VIEW_KEY) === 'map' ? 'map' : 'table'
+  } catch {
+    // Storage can be unavailable; the table is the default.
+    return 'table'
+  }
+}
+
 const opens = (row: NodeEntry | undefined): row is NodeEntry =>
   row !== undefined && row.kind === 'dir' && row.hasChildren
 
@@ -43,6 +57,15 @@ export function BrowseView({ screen }: { screen: BrowseScreen }) {
   // The folder just left by going up, so the table can select it again.
   const [cameFrom, setCameFrom] = useState<number | null>(null)
   const trail = useTrail(scan, node)
+  const [view, setView] = useState<View>(initialView)
+  const choose = (next: View) => {
+    setView(next)
+    try {
+      localStorage.setItem(VIEW_KEY, next)
+    } catch {
+      // Not remembered; the choice still holds for this session.
+    }
+  }
 
   const name = node.id === done.summary.root.id ? done.target.name : node.name
   const parent = trail && trail.length > 1 ? trail[trail.length - 2] : undefined
@@ -65,19 +88,47 @@ export function BrowseView({ screen }: { screen: BrowseScreen }) {
         <LeaderRow name={name} title={name} value={formatBytes(node.allocated, locale)} />
       </h1>
 
-      <Table
-        scan={scan}
-        node={node}
-        label={t('browse.tableLabel', { name })}
-        sort={sort}
-        cameFrom={cameFrom}
-        onSort={onSort}
-        onOpen={open}
-        onUp={up}
-        onExit={showSummary}
-      />
+      <div role="group" aria-label={t('browse.view')} className="mt-4 flex gap-1 self-start rounded-control border border-hairline bg-card p-0.5">
+        {(['table', 'map'] as const).map((v) => (
+          <button
+            key={v}
+            type="button"
+            aria-pressed={view === v}
+            onClick={() => choose(v)}
+            className={`h-7 rounded-tag px-3 text-secondary transition-[background-color,color] duration-150 ease-out ${
+              view === v ? 'bg-raised text-ink' : 'text-ink-2 hover:text-ink'
+            }`}
+          >
+            {t(v === 'table' ? 'browse.table' : 'browse.map')}
+          </button>
+        ))}
+      </div>
 
-      <p className="mt-3 text-meta text-ink-3">{t('browse.hint')}</p>
+      {view === 'table' ? (
+        <Table
+          scan={scan}
+          node={node}
+          label={t('browse.tableLabel', { name })}
+          sort={sort}
+          cameFrom={cameFrom}
+          onSort={onSort}
+          onOpen={open}
+          onUp={up}
+          onExit={showSummary}
+        />
+      ) : (
+        <Treemap
+          scan={scan}
+          node={node}
+          label={t('browse.mapLabel', { name })}
+          cameFrom={cameFrom}
+          onOpen={open}
+          onUp={up}
+          onExit={showSummary}
+        />
+      )}
+
+      <p className="mt-3 text-meta text-ink-3">{t(view === 'table' ? 'browse.hint' : 'browse.mapHint')}</p>
     </section>
   )
 }
@@ -418,15 +469,4 @@ function Table({
       </p>
     </div>
   )
-}
-
-/** True once `key` has stayed the same, and not null, for `ms`. */
-function useLater(key: string | null, ms: number): boolean {
-  const [due, setDue] = useState<string | null>(null)
-  useEffect(() => {
-    if (key === null) return
-    const id = window.setTimeout(() => setDue(key), ms)
-    return () => window.clearTimeout(id)
-  }, [key, ms])
-  return key !== null && due === key
 }
