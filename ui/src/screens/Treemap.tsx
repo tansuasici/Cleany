@@ -11,6 +11,7 @@ import {
 import { formatBytes, formatCount, formatShare } from '../lib/format'
 import { type NodeEntry, type ScanId, type TreemapCell, type TreemapSlice, getTreemap } from '../lib/ipc'
 import { type Box, fit, useBox, useScheme } from '../canvas'
+import type { ActionTarget } from './useBrowseActions'
 import { useLater } from '../useLater'
 import { useT } from '../useT'
 
@@ -93,6 +94,7 @@ export function Treemap({
   onOpen,
   onUp,
   onExit,
+  onSelect,
 }: {
   scan: ScanId
   node: NodeEntry
@@ -101,6 +103,8 @@ export function Treemap({
   onOpen: (node: NodeEntry) => void
   onUp: () => void
   onExit: () => void
+  /** The selected block's node, or `null` for "others" and while loading. */
+  onSelect: (target: ActionTarget | null) => void
 }) {
   const { t, locale } = useT()
   const panel = useRef<HTMLDivElement>(null)
@@ -287,6 +291,11 @@ export function Treemap({
   const hovered = hover ? cells[hover.cell] : undefined
   const hoveredTop = hover ? top.find((c) => inside(c, hover.x, hover.y)) : undefined
   const chosen = top[active]
+  const chosenId = chosen?.id ?? null
+  const chosenName = chosen?.name
+  useEffect(() => {
+    onSelect(chosenId === null || chosenName === undefined ? null : { id: chosenId, name: chosenName })
+  }, [chosenId, chosenName, onSelect])
   const empty = slice !== null && top.length === 0
 
   return (

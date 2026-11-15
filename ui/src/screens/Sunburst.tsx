@@ -2,6 +2,7 @@ import { type KeyboardEvent, type MouseEvent, useCallback, useEffect, useLayoutE
 import { formatBytes, formatCount, formatShare } from '../lib/format'
 import { type NodeEntry, type RingArc, type ScanId, type SunburstSlice, getSunburst } from '../lib/ipc'
 import { type Box, fit, useBox, useScheme } from '../canvas'
+import type { ActionTarget } from './useBrowseActions'
 import { useLater } from '../useLater'
 import { useT } from '../useT'
 
@@ -66,6 +67,7 @@ export function Sunburst({
   onOpen,
   onUp,
   onExit,
+  onSelect,
 }: {
   scan: ScanId
   node: NodeEntry
@@ -77,6 +79,8 @@ export function Sunburst({
   onOpen: (node: NodeEntry) => void
   onUp: () => void
   onExit: () => void
+  /** The selected block's node, or `null` for "others" and while loading. */
+  onSelect: (target: ActionTarget | null) => void
 }) {
   const { t, locale } = useT()
   const panel = useRef<HTMLDivElement>(null)
@@ -335,6 +339,11 @@ export function Sunburst({
   const hovered = hover?.hit.at === 'arc' ? arcs[hover.hit.i] : undefined
   const pointer = hover?.hit.at === 'centre' ? canGoUp : opens(target(hovered))
   const chosen = top[active]
+  const chosenId = chosen?.id ?? null
+  const chosenName = chosen?.name
+  useEffect(() => {
+    onSelect(chosenId === null || chosenName === undefined ? null : { id: chosenId, name: chosenName })
+  }, [chosenId, chosenName, onSelect])
   const empty = slice !== null && top.length === 0
 
   return (

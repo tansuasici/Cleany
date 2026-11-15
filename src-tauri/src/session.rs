@@ -714,6 +714,19 @@ impl Sessions {
         out.reverse();
         Ok(out)
     }
+
+    /// The full path of `node`, for showing, opening or copying it. Paths
+    /// never come from the UI: it names a node and the tree supplies the path.
+    ///
+    /// # Errors
+    /// [`SessionError::StaleScan`], [`SessionError::NotReady`] or
+    /// [`SessionError::UnknownNode`].
+    pub fn path(&self, id: ScanId, node: u32) -> Result<PathBuf, SessionError> {
+        let mut state = lock(&self.state);
+        let tree = &state.finished_mut(id)?.tree;
+        let node = tree.node_id(node).ok_or(SessionError::UnknownNode)?;
+        tree.path(node).ok_or(SessionError::UnknownNode)
+    }
 }
 
 /// Records the outcome of scan `id` and returns the event that ends its
@@ -1006,6 +1019,40 @@ mod tests {
         let err = s.children(id, 99, SortKey::Name, SortOrder::Asc, 0, 10);
         assert_eq!(err, Err(SessionError::UnknownNode));
         assert_eq!(s.ancestors(id, u32::MAX), Err(SessionError::UnknownNode));
+    }
+
+    #[test]
+    fn path_of_node_is_root_joined() {
+        let (s, id) = done(small_tree());
+        let c = s
+            .children(id, 0, SortKey::Name, SortOrder::Asc, 2, 1)
+            .unwrap()
+            .items[0]
+            .id;
+        let x = s
+            .children(id, c, SortKey::Name, SortOrder::Asc, 0, 1)
+            .unwrap()
+            .items[0]
+            .id;
+        assert_eq!(s.path(id, 0), Ok(PathBuf::from("/r")));
+        assert_eq!(s.path(id, x), Ok(PathBuf::from("/r/C/x")));
+    }
+
+    #[test]
+    fn path_of_unknown_node_is_error() {
+        let (s, id) = done(small_tree());
+        assert_eq!(s.path(id, u32::MAX), Err(SessionError::UnknownNode));
+        assert_eq!(s.path(ScanId(8), 0), Err(SessionError::StaleScan));
+    }
+
+    #[test]
+    fn path_before_done_is_not_ready() {
+        let s = Sessions::default();
+        let cancel = CancelToken::new();
+        cancel.cancel();
+        let (id, rx) = start(&s, cancel);
+        assert_eq!(last_event(&rx), ScanEvent::Cancelled);
+        assert_eq!(s.path(id, 0), Err(SessionError::NotReady));
     }
 
     #[test]
