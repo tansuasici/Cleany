@@ -1,7 +1,8 @@
-//! Platform layer: OS detection, raw entry metadata and volume listing; fast scan paths,
-//! trash and reveal come later (M7+).
+//! Platform layer: OS detection, raw entry metadata, volume listing, and
+//! handing paths to the file manager; fast scan paths and trash come later (M7+).
 
 pub mod meta;
+pub mod shell;
 pub mod volumes;
 
 pub use meta::{EntryKind, EntryMeta, read_entry_meta, read_meta};

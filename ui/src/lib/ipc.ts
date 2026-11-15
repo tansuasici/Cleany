@@ -1,9 +1,10 @@
 import { Channel, invoke } from '@tauri-apps/api/core'
 
 // Hand-written mirror of the serialized types in src-tauri/src/lib.rs,
-// src-tauri/src/session.rs, src-tauri/src/volumes.rs and src-tauri/src/access.rs.
-// The `ipc_ts_mentions_every_serialized_key`, `ipc_ts_mentions_every_volume_key`
-// and `ipc_ts_mentions_every_access_tag` Rust tests fail when a key or tag here
+// src-tauri/src/session.rs, src-tauri/src/volumes.rs, src-tauri/src/access.rs
+// and src-tauri/src/actions.rs. The `ipc_ts_mentions_every_serialized_key`,
+// `ipc_ts_mentions_every_volume_key`, `ipc_ts_mentions_every_access_tag` and
+// `ipc_ts_mentions_every_action_tag` Rust tests fail when a key or tag here
 // drifts from the backend.
 
 export interface AppInfo {
@@ -205,6 +206,23 @@ export const getSunburst = (scan: ScanId, node: number, depth = 3, minAngle = 0.
 
 export const getAncestors = (scan: ScanId, node: number) =>
   invoke<NodeEntry[]>('get_ancestors', { scan, node })
+
+/** Rejection value of `revealNode`, `openNode` and `getPath`. */
+export type ActionError =
+  | { kind: 'staleScan' }
+  | { kind: 'notReady' }
+  | { kind: 'unknownNode' }
+  | { kind: 'gone' }
+  | { kind: 'launch'; message: string }
+
+/** Shows the node selected in Finder / Explorer / the file manager. */
+export const revealNode = (scan: ScanId, node: number) => invoke<void>('reveal_node', { scan, node })
+
+/** Opens the node with its default app, as a double-click would. */
+export const openNode = (scan: ScanId, node: number) => invoke<void>('open_node', { scan, node })
+
+/** The node's full path, for the clipboard. */
+export const getPath = (scan: ScanId, node: number) => invoke<string>('get_path', { scan, node })
 
 /**
  * Whether macOS lets the app read protected folders (Mail, Safari, other

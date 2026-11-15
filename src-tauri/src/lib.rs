@@ -1,6 +1,7 @@
 //! Tauri shell for Cleany. Commands here stay thin; logic lives in `cleany-core`.
 
 mod access;
+mod actions;
 mod session;
 mod volumes;
 
@@ -11,6 +12,7 @@ use serde::Serialize;
 use tauri::ipc::Channel;
 
 use access::{AccessError, DiskAccess};
+use actions::ActionError;
 use session::{
     ChildrenPage, NodeEntry, ScanEvent, ScanId, SessionError, Sessions, SortKey, SortOrder,
     SunburstSlice, TreemapSlice,
@@ -117,6 +119,36 @@ fn get_ancestors(
     sessions.ancestors(scan, node)
 }
 
+/// Shows the node selected in Finder / Explorer / the file manager.
+#[tauri::command(async)]
+fn reveal_node(
+    sessions: tauri::State<'_, Sessions>,
+    scan: ScanId,
+    node: u32,
+) -> Result<(), ActionError> {
+    actions::reveal(&sessions, scan, node)
+}
+
+/// Opens the node with its default app, as a double-click would.
+#[tauri::command(async)]
+fn open_node(
+    sessions: tauri::State<'_, Sessions>,
+    scan: ScanId,
+    node: u32,
+) -> Result<(), ActionError> {
+    actions::open(&sessions, scan, node)
+}
+
+/// The node's full path, for the clipboard.
+#[tauri::command(async)]
+fn get_path(
+    sessions: tauri::State<'_, Sessions>,
+    scan: ScanId,
+    node: u32,
+) -> Result<String, ActionError> {
+    actions::path_text(&sessions, scan, node)
+}
+
 /// Best-effort macOS Full Disk Access status; `notApplicable` elsewhere.
 #[tauri::command(async)]
 fn disk_access() -> DiskAccess {
@@ -145,6 +177,9 @@ pub fn run() {
             get_ancestors,
             get_treemap,
             get_sunburst,
+            reveal_node,
+            open_node,
+            get_path,
             disk_access,
             open_disk_access_settings
         ])
