@@ -8,8 +8,9 @@ type Count = { n: string; count: number }
 
 const tr = {
   'app.name': 'Cleany',
-  'app.switchLocale': 'English',
-  'app.switchLocaleLabel': 'Dili İngilizce yap',
+  'app.home': 'Cleany, birimlere dön',
+  'app.language': (p: { name: string }) => `Dil: ${p.name}`,
+  'app.languages': 'Dil',
   'app.volumes': 'Birimler',
   'app.trail': 'Konum',
 
@@ -136,8 +137,9 @@ const entries = plural('entry', 'entries')
 
 const en: Dict = {
   'app.name': 'Cleany',
-  'app.switchLocale': 'Türkçe',
-  'app.switchLocaleLabel': 'Switch language to Turkish',
+  'app.home': 'Cleany, back to volumes',
+  'app.language': (p) => `Language: ${p.name}`,
+  'app.languages': 'Language',
   'app.volumes': 'Volumes',
   'app.trail': 'Location',
 

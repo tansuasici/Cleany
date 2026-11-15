@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
-import { ChevronIcon } from './components/ui'
+import { LocaleMenu } from './components/LocaleMenu'
+import { AppIcon, ChevronIcon } from './components/ui'
 import type { NodeEntry } from './lib/ipc'
 import { BrowseView } from './screens/Browse'
 import { EndedScreen } from './screens/Ended'
@@ -13,7 +14,7 @@ import { useTrail } from './useTrail'
 export default function App() {
   const { t, locale } = useT()
   const screen = useStore((s) => s.screen)
-  const setLocale = useStore((s) => s.setLocale)
+  const showVolumes = useStore((s) => s.showVolumes)
   const loadVolumes = useStore((s) => s.loadVolumes)
   const checkAccess = useStore((s) => s.checkAccess)
 
@@ -35,17 +36,23 @@ export default function App() {
 
   return (
     <div className="flex h-full flex-col">
-      <header className="flex h-12 shrink-0 items-center gap-3 border-b border-hairline bg-card px-4">
-        <Trail screen={screen} />
+      <header className="flex h-12 shrink-0 items-center gap-3 border-b border-hairline bg-card px-4 max-sm:gap-2 max-sm:px-3">
         <button
           type="button"
-          lang={locale === 'tr' ? 'en' : 'tr'}
-          aria-label={t('app.switchLocaleLabel')}
-          onClick={() => setLocale(locale === 'tr' ? 'en' : 'tr')}
-          className="ml-auto inline-flex h-8 items-center rounded-control px-2 text-secondary text-ink-2 transition-[background-color] duration-150 ease-out hover:bg-raised hover:text-ink"
+          onClick={showVolumes}
+          aria-label={t('app.home')}
+          className="inline-flex h-8 shrink-0 items-center gap-2 rounded-control px-1.5 text-ink transition-[background-color] duration-150 ease-out hover:bg-raised motion-reduce:transition-none"
         >
-          {t('app.switchLocale')}
+          <AppIcon />
+          <span aria-hidden className="text-strong font-medium max-sm:hidden">
+            Cleany
+          </span>
         </button>
+        <span aria-hidden className="h-5 w-px shrink-0 bg-hairline" />
+        <Trail screen={screen} />
+        <div className="ml-auto shrink-0">
+          <LocaleMenu />
+        </div>
       </header>
 
       <main className="min-h-0 flex-1 overflow-auto [scrollbar-gutter:stable]">
@@ -68,7 +75,7 @@ type Crumb = { key: string | number; label: string; onPress?: () => void }
 function Trail({ screen }: { screen: Screen }) {
   const { t } = useT()
   const showVolumes = useStore((s) => s.showVolumes)
-  if (screen.kind === 'volumes') return <span className="text-strong font-medium">{t('app.name')}</span>
+  if (screen.kind === 'volumes') return <Crumbs crumbs={[{ key: 'volumes', label: t('app.volumes') }]} />
   if (screen.kind === 'browse') return <BrowseTrail screen={screen} />
 
   const volumes: Crumb = { key: 'volumes', label: t('app.volumes'), onPress: showVolumes }
