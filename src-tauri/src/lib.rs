@@ -13,6 +13,7 @@ use tauri::ipc::Channel;
 use access::{AccessError, DiskAccess};
 use session::{
     ChildrenPage, NodeEntry, ScanEvent, ScanId, SessionError, Sessions, SortKey, SortOrder,
+    TreemapSlice,
 };
 use volumes::VolumeEntry;
 
@@ -80,6 +81,20 @@ fn get_children(
     sessions.children(scan, node, sort, order, offset, limit)
 }
 
+/// A node's treemap in a `width` × `height` CSS-pixel box.
+#[tauri::command(async)]
+fn get_treemap(
+    sessions: tauri::State<'_, Sessions>,
+    scan: ScanId,
+    node: u32,
+    width: f32,
+    height: f32,
+    depth: u8,
+    min_area: f32,
+) -> Result<TreemapSlice, SessionError> {
+    sessions.treemap(scan, node, width, height, depth, min_area)
+}
+
 /// A node and its ancestors, root first.
 #[tauri::command(async)]
 fn get_ancestors(
@@ -116,6 +131,7 @@ pub fn run() {
             cancel_scan,
             get_children,
             get_ancestors,
+            get_treemap,
             disk_access,
             open_disk_access_settings
         ])
