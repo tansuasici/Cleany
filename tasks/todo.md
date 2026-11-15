@@ -9,7 +9,90 @@ Give the task you are actively working on an `h3` heading under **In Progress** 
 
 ## In Progress
 
-### M3 — Görselleştirme: sunburst (Notion #25)
+### M4 — Göster / aç / yolu kopyala (Notion #29)
+
+**Hedef**: Browse'un üç görünümünde (Tablo, Harita, Halka) seçili öğe için üç eylem: dosya yöneticisinde göster, varsayılan uygulamayla aç, tam yolu panoya kopyala. Bu eylemler düğmelerle ve klavyeyle yapılabilmeli. macOS, Windows ve Linux'ta çalışmalı. Notion kartı boş; kabul ölçütü bu satır.
+
+**Bağlam**: docs/PLAN.md:44 (Aksiyonlar), :110 (`reveal(node)`, `open(node)`), :72 (`cleany-platform` = "çöp/reveal"). M4'ün ilk kartı; #33 (sepet) ve #30 (çöp) aynı "seçili öğe" bağlantısını kullanacak. Tek PR, dal `feat/m4-reveal-open-copy`.
+
+#### Durum (2026-11-15)
+Plan onaylandı; açık sorular: 1 `R`/`O`/`⌘C`, 2 evet, 3 `std::process::Command`, 4 bağlam menüsü yok. Kod tamam, commit yok.
+- Plandan sapmalar: Rust tarafı `ActionError` ve komut gövdeleri `src-tauri/src/actions.rs`'e alındı (`lib.rs` yalnız kaydeder). Kancalar oxlint `only-export-components` nedeniyle `ui/src/screens/useBrowseActions.ts`'e ayrıldı. "Kopyalandı" için 150 ms solma eklenmedi (geri bildirim bir tuşa yanıt; tuş eylemleri canlandırılmaz).
+- Doğrulama: fmt/clippy/test/release temiz. Tarayıcı mock'uyla üç görünümde ok tuşuyla seçim → R/O doğru düğüm id'sini çağırıyor, ⌘C yolu kopyalıyor, "artık yok" uyarısı çıkıyor; 375/768/1280, açık/koyu.
+- Ayrı değişiklik (ayrı commit): macOS/Windows uygun simgeler (`assets/icon-macos*.svg`, `src-tauri/icons/`).
+
+#### Tasarım kararları
+- **Yol UI'dan gelmez.** Komutlar `(scan, node)` alır; yol Rust'ta ağaçtan çıkarılır (`Tree::path`). Böylece webview rastgele bir yolu açtıramaz. Bu, #34'teki yetki daraltma çizgisiyle de uyumlu.
+- **Yeni bağımlılık yok (önerilen).** `cleany-platform`'a `shell` modülü eklenir. `access::open_settings` gibi `std::process::Command` kullanır:
+  - macOS: göster `open -R <yol>`, aç `open <yol>`.
+  - Windows: göster `explorer.exe /select,"<yol>"` (`raw_arg`, virgül/boşluk için), aç `explorer.exe "<yol>"`.
+  - Linux: göster `dbus-send … org.freedesktop.FileManager1.ShowItems`, yoksa üst klasörde `xdg-open`; aç `xdg-open <yol>`.
+  - Alternatif: `tauri-plugin-opener` (`reveal_item_in_dir`, `open_path`). Linux'ta daha denenmiş, ama yeni bağımlılık olduğu için onay ister. Yalnız Rust tarafından çağrılır, JS'e izin açılmaz.
+- **Komut kurma saf fonksiyon.** `fn reveal_command(os, path) -> (program, args)` ve `fn open_command(os, path) -> (program, args)`, OS'tan bağımsız birim testiyle sınanır. Gerçek çalıştırma ince bir sarmalayıcıdır.
+- **Tarama ile şimdi arasında yol kaybolmuş olabilir.** Çalıştırmadan önce `symlink_metadata` ile bakılır. Yol yoksa `ActionError::Gone` döner; UI "Bu öğe artık yok" der.
+- **Yeni IPC (genel API değişikliği, onay):**
+  - `reveal_node(scan, node) -> ()`
+  - `open_node(scan, node) -> ()`
+  - `get_path(scan, node) -> String`
+  - Hata türü `ActionError { kind: notReady | unknownNode | gone | launch{message} }`, `ipc.ts` ile eşlenir; mevcut "etiket kayması" testi genişletilir.
+- **Kopyalama UI'da.** Yol `get_path` ile alınır, `navigator.clipboard.writeText` ile yazılır (Tauri webview güvenli bağlam; kullanıcı hareketiyle tetiklenir). Clipboard eklentisi yok.
+- **Aç ≠ Enter.** Enter ve → bugünkü gibi yalnız klasörün içine girer. "Aç" ancak düğmeyle ya da kendi kısayoluyla çalışır; böylece kazara bir dosya ya da uygulama başlatılmaz. Bir dosyayı açmak Finder'daki çift tıkla aynı şeydir; yürütülebilir dosyalar engellenmez (açık soru 2).
+
+#### UI kararları
+- **Eylem satırı:** görünümün altında, ipucu satırının yerinde (ipucu sağa kayar ya da altında kalır; 375'te alt alta). Üç ikincil düğme vardır:
+  - "Finder'da göster" (Windows'ta "Gezgin'de göster", Linux'ta "Dosya yöneticisinde göster")
+  - "Aç"
+  - "Yolu kopyala"
+- **Hedef:** seçili öğe. Hiçbir öğe seçili değilse, ya da seçim "diğerleri" kümesiyse, hedef o an gezilen klasördür. Düğme etiketleri hedefin adını göstermez; `aria-describedby` hedefi söyler.
+- **Görünümlerden seçim yukarı taşınır:** Table, Treemap ve Sunburst'e `onSelect(target | null)` eklenir (`{ id, name, kind }`).
+- **Kısayollar** (odak görünümdeyken): `R` göster, `O` aç, `⌘C` / `Ctrl+C` yolu kopyala. İpucu satırı bunları söyler (açık soru 1).
+- **Geri bildirim:**
+  - Kopyalayınca düğmenin yanında 2 sn "Kopyalandı" görünür (`aria-live="polite"`); tetikleyen düğme kayıp yaratmaz.
+  - Hata satır içinde `role="alert"` ile gösterilir, renk şeridi yoktur.
+  - Hareket yalnız opacity, 150 ms ease-out, reduced-motion'da anında.
+- **Yeni token yok;** mevcut ikincil düğme stili kullanılır.
+
+#### Testler (önce yazılır)
+- `shell::tests::reveal_command_*` (macos/windows/linux): program ve argümanlar beklenen biçimde; Windows'ta virgüllü ve boşluklu yol bozulmaz.
+- `shell::tests::open_command_*` (her OS).
+- `shell::tests::linux_reveal_falls_back_to_parent`: dbus yoksa üst klasör açılır.
+- `session::tests::path_of_node_is_root_joined`: kök ve derin düğümün yolu doğru.
+- `session::tests::path_of_unknown_node_is_error` / `path_before_done_is_not_ready`.
+- `lib::tests::ipc_ts_mentions_every_action_tag`: `ActionError` etiketleri `ipc.ts`'de var.
+- UI'da test koşucusu yok; tarayıcı mock'uyla elle doğrulanır:
+  - üç görünümde seç → göster, aç ve kopyala çalışır;
+  - "diğerleri" seçilince hedef klasördür;
+  - hata ve "artık yok" durumları görünür;
+  - 375/768/1280, açık ve koyu, klavye.
+
+#### Dokunulacak dosyalar
+- `crates/cleany-platform/src/shell.rs` (yeni), `crates/cleany-platform/src/lib.rs`: `reveal`, `open`, komut kurucular.
+- `src-tauri/src/session.rs`: `Sessions::path(scan, node)`.
+- `src-tauri/src/lib.rs`: üç komut, `ActionError`, kayıt.
+- `ui/src/lib/ipc.ts`: türler ve `revealNode` / `openNode` / `getPath`.
+- `ui/src/screens/Browse.tsx`: eylem satırı, hedef durumu.
+- `ui/src/screens/Treemap.tsx`, `ui/src/screens/Sunburst.tsx`, (Table `Browse.tsx` içinde): `onSelect` ve kısayollar.
+- `ui/src/lib/i18n.ts`: TR/EN metinler (OS'a göre "göster" etiketi `app_info.os`'tan).
+- `tasks/todo.md`: bu plan; biten M3 bölümleri Done'a taşınır.
+
+#### Açık sorular
+1. Kısayollar `R` / `O` / `⌘C` uygun mu? Alternatif: `⌘⇧R` göster (VS Code "Reveal in Finder" `⌥⌘R`), `⌘O` aç.
+2. "Aç" yürütülebilir dosyalarda (`.app`, `.exe`, betikler) da çalışsın mı? Önerim: evet, Finder'daki gibi. Kazara açmayı Enter'dan ayırmak yeterli.
+3. Bağımlılık: düz `std::process::Command` (önerilen) mi, yoksa `tauri-plugin-opener` mı?
+4. Sağ tık bağlam menüsü bu PR'a girmesin (M4'te sepetle birlikte daha anlamlı), uygun mu?
+
+#### Riskler
+- **Linux'ta dosya yöneticisi çeşitliliği:** `FileManager1` olmayan masaüstünde öğe seçilemez, yalnız klasör açılır. Kabul edilir, elle Linux denemesi #27 ile birlikte yapılır.
+- **Windows'ta `explorer /select` tırnaklama hatası:** `raw_arg` ve testle kapatılır. Windows'ta elle denenemiyor; CI derlemesi var.
+- **WebKit `clipboard.writeText` kullanıcı hareketi ister:** `get_path` yanıtı beklenirken hareket bağlamı düşebilir. Önlem: seçim değişince yol önceden alınır, düğmede doğrudan yazılır. Olmazsa `tauri-plugin-clipboard-manager` gerekir (onay).
+
+## Up Next
+
+---
+
+## Done
+
+### M3 — Görselleştirme: sunburst (Notion #25) ✅ 2026-11-15 (#22 merged)
 
 **Hedef**: Browse'da "Tablo / Harita" yanına üçüncü bir "Halka" görünümü. Klasör merkezde daire, alt klasörler dışa doğru iç içe halkalar (açı = boyut payı), canvas'ta çizilir. Hover bilgi verir, dilime tıklamak içine girer, merkeze tıklamak üst klasöre çıkar, klavyeyle tam kullanılır. Notion kartı boş; kabul ölçütü bu satır.
 
@@ -60,7 +143,7 @@ Give the task you are actively working on an `h3` heading under **In Progress** 
 - Çok sayıda ince dilimde WebKitGTK çizim süresi — #27 ölçecek; `MAX_CELLS` ve `minAngle` sınırlar.
 - İsabet testi: açı sarması (0/1 sınırı) ve yarıçap halkaları; testte kenar durumları elle denenir.
 
-### M3 — Görselleştirme: treemap (Notion #26 → #24)
+### M3 — Görselleştirme: treemap (Notion #26 → #24) ✅ 2026-11-15 (#20, #21 merged)
 
 **Hedef**: Bitmiş bir taramada bir klasör, canvas üzerinde squarified treemap olarak çizilir. Hover bilgi verir, bir bloğa tıklamak içine girer, breadcrumb ile geri dönülür. UI'a yalnızca çizilecek kadar düğüm gider.
 
@@ -111,7 +194,7 @@ Give the task you are actively working on an `h3` heading under **In Progress** 
 - f32 yuvarlama ile 1 px'lik boşluk/taşma: testlerde ε kullanılır, UI'da çizerken `Math.round` hizalaması.
 - Çok geniş klasörlerde (100k çocuk) sıralama maliyeti: `get_children`'daki sıralama önbelleğine benzer şekilde yalnız bir kez sıralanır; ölçülür.
 
-### M2 — Uygulama kabuğu (Notion #18–#23)
+### M2 — Uygulama kabuğu (Notion #18–#23) ✅ 2026-11-15 (#17 dahil merged)
 
 **Hedef**: Uygulama açılınca birimler (volume) listelenir. Kullanıcı bir birimi ya da klasörü tarar, canlı ilerlemeyi görür ve taramayı iptal edebilir. Sonuç sanal bir ağaç tabloda boyuta göre sıralı gelir; tek tıkla klasörün içine girilir (ADR-0004), breadcrumb ile geri çıkılır. UI hiçbir zaman milyonlarca düğüm almaz, yalnızca sayfa sayfa çocuk listesi alır.
 
@@ -327,12 +410,6 @@ _2026-11-14: 1 → yön A; 2 → `sysinfo`, `zustand` onaylandı, `tauri-specta`
 - **macOS'ta `/` taraması Data birimini iki kez sayabilir**: `/`, `/Users` ve `/System/Volumes/Data` aynı `dev` değerini döndürüyor (APFS volume group). `cross_mounts=false` sınırı bu yüzden durmuyor. `/Users` firmlink üzerinden bir kez, `/System/Volumes/Data/Users` üzerinden bir kez daha yürünür. Çözüm core tarayıcıda olmalı (kök `/` iken `/System/Volumes/Data` atlanmalı). **Ölçüldü (2026-11-15, PR 5 smoke testi)**: 928 GB dolu Macintosh HD taraması toplam 1,5 TB verdi; `System` 804 GB, `Users` 599 GB. Çift sayım doğrulandı.
 
 ---
-
-## Up Next
-
----
-
-## Done
 
 ### M1 — Çekirdek tarayıcı + CLI (Notion #8–#17) ✅ 2026-11-14 (#4–#8 merged)
 

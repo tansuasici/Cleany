@@ -9,6 +9,8 @@ import {
   getChildren,
 } from '../lib/ipc'
 import { type BrowseScreen, useStore } from '../store'
+import { ActionBar } from './BrowseActions'
+import { type ActionTarget, actionKeys, useBrowseActions } from './useBrowseActions'
 import { Sunburst } from './Sunburst'
 import { Treemap } from './Treemap'
 import { useT } from '../useT'
@@ -74,6 +76,10 @@ export function BrowseView({ screen }: { screen: BrowseScreen }) {
 
   const name = node.id === done.summary.root.id ? done.target.name : node.name
   const parent = trail && trail.length > 1 ? trail[trail.length - 2] : undefined
+  // The view's selection; with none (or "others"), the actions act on this folder.
+  const [picked, setPicked] = useState<ActionTarget | null>(null)
+  const target = picked ?? { id: node.id, name }
+  const actions = useBrowseActions(scan, target)
 
   const open = (target: NodeEntry) => {
     setCameFrom(null)
@@ -88,7 +94,10 @@ export function BrowseView({ screen }: { screen: BrowseScreen }) {
     setSort((s) => (s.key === key ? { key, order: s.order === 'asc' ? 'desc' : 'asc' } : { key, order: firstOrder(key) }))
 
   return (
-    <section aria-labelledby="browse-title" className="mx-auto flex h-full w-full max-w-240 flex-col px-8 pt-8 pb-4">
+    <section
+      aria-labelledby="browse-title"
+      onKeyDown={actionKeys(actions)}
+      className="mx-auto flex h-full w-full max-w-240 flex-col px-8 pt-8 pb-4">
       <h1 id="browse-title" className="text-title font-medium">
         <LeaderRow name={name} title={name} value={formatBytes(node.allocated, locale)} />
       </h1>
@@ -120,6 +129,7 @@ export function BrowseView({ screen }: { screen: BrowseScreen }) {
           onOpen={open}
           onUp={up}
           onExit={showSummary}
+          onSelect={setPicked}
         />
       ) : view === 'map' ? (
         <Treemap
@@ -130,6 +140,7 @@ export function BrowseView({ screen }: { screen: BrowseScreen }) {
           onOpen={open}
           onUp={up}
           onExit={showSummary}
+          onSelect={setPicked}
         />
       ) : (
         <Sunburst
@@ -142,10 +153,14 @@ export function BrowseView({ screen }: { screen: BrowseScreen }) {
           onOpen={open}
           onUp={up}
           onExit={showSummary}
+          onSelect={setPicked}
         />
       )}
 
-      <p className="mt-3 text-meta text-ink-3">{t(HINT_TEXT[view])}</p>
+      <div className="mt-3 flex flex-col gap-2">
+        <ActionBar target={target} actions={actions} />
+        <p className="text-meta text-ink-3">{t(HINT_TEXT[view])}</p>
+      </div>
     </section>
   )
 }
@@ -210,6 +225,7 @@ function Table({
   onOpen,
   onUp,
   onExit,
+  onSelect,
 }: {
   scan: ScanId
   node: NodeEntry
@@ -220,6 +236,7 @@ function Table({
   onOpen: (node: NodeEntry) => void
   onUp: () => void
   onExit: () => void
+  onSelect: (target: ActionTarget | null) => void
 }) {
   const { t, locale } = useT()
   const { pages, load, retry, row } = usePages(scan, node.id, sort)
@@ -259,6 +276,11 @@ function Table({
   const count = pages.total ?? 0
   const slow = useLater(pages.total === null ? listKey : null, LOADING_DELAY_MS)
   const selectedRow = row(active)
+  const selectedId = selectedRow?.id
+  const selectedName = selectedRow?.name
+  useEffect(() => {
+    onSelect(selectedId === undefined || selectedName === undefined ? null : { id: selectedId, name: selectedName })
+  }, [selectedId, selectedName, onSelect])
   const first = Math.max(0, Math.floor(scrollTop / ROW) - OVERSCAN)
   const last = Math.min(count, Math.ceil((scrollTop + height) / ROW) + OVERSCAN)
 
