@@ -19,7 +19,7 @@ export function EndedScreen({ screen }: Props) {
       {failed ? (
         <div role="alert" className="mt-6 flex flex-col gap-3">
           <p className="text-ink-2">{t('failed.lead')}</p>
-          <p className="break-words rounded-control border-l-2 border-negative bg-card p-3 font-mono text-secondary text-ink">
+          <p className="break-words rounded-control border border-hairline bg-card p-3 font-mono text-secondary text-ink">
           {screen.message}
           </p>
         </div>

@@ -298,7 +298,7 @@ function Table({
         }}
         className={`${cols} absolute inset-x-0 top-0 h-8 items-center rounded-control text-body ${
           opens(r) ? 'cursor-pointer' : ''
-        } ${selected ? 'bg-raised shadow-[inset_2px_0_0_var(--c-accent)]' : 'hover:bg-raised'}`}
+        } ${selected ? 'bg-raised' : 'hover:bg-raised/50'}`}
         style={{ transform: `translateY(${i * ROW}px)` }}
       >
         {r ? (
