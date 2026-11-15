@@ -436,22 +436,21 @@ function Table({
         className="relative min-h-0 flex-1 overflow-auto px-1 py-1 [scrollbar-gutter:stable]"
       >
         {pages.failed ? (
-          <p className="flex items-center gap-3 px-3 py-2 text-ink-2">
+          <p role="alert" className="flex items-center gap-3 px-3 py-2 text-ink-2">
             {t('summary.childrenError')}
             <button
               type="button"
               onClick={retry}
-              className="rounded-tag px-1 text-ink underline-offset-2 hover:underline"
+              className="inline-flex min-h-6 items-center rounded-tag px-1 text-ink underline-offset-2 hover:underline"
             >
               {t('volumes.retry')}
             </button>
           </p>
-        ) : pages.total === null ? (
+        ) : pages.total === null || count === 0 ? (
+          // One status line for loading and empty, so the empty result is announced too.
           <p role="status" className="px-3 py-2 text-ink-2">
-            {slow && t('browse.loading')}
+            {pages.total === null ? slow && t('browse.loading') : t('browse.empty')}
           </p>
-        ) : count === 0 ? (
-          <p className="px-3 py-2 text-ink-2">{t('browse.empty')}</p>
         ) : (
           <div className="relative" style={{ height: count * ROW }}>
             {rows}

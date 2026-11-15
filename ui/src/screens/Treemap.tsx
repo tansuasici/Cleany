@@ -369,7 +369,7 @@ export function Treemap({
         />
 
         {failed ? (
-          <p className="absolute inset-x-0 top-0 flex items-center gap-3 px-3 py-2 text-ink-2">
+          <p role="alert" className="absolute inset-x-0 top-0 flex items-center gap-3 px-3 py-2 text-ink-2">
             {t('summary.childrenError')}
             <button
               type="button"
@@ -377,18 +377,17 @@ export function Treemap({
                 e.stopPropagation()
                 setGot(null)
               }}
-              className="rounded-tag px-1 text-ink underline-offset-2 hover:underline"
+              className="inline-flex min-h-6 items-center rounded-tag px-1 text-ink underline-offset-2 hover:underline"
             >
               {t('volumes.retry')}
             </button>
           </p>
-        ) : slice === null ? (
-          <p role="status" className="absolute inset-x-0 top-0 px-3 py-2 text-ink-2">
-            {slow && t('browse.loading')}
+        ) : (
+          // One status line for loading and empty, so the empty result is announced too.
+          <p role="status" className="absolute inset-x-0 top-0 px-3 py-2 text-ink-2 empty:hidden">
+            {slice === null ? slow && t('browse.loading') : empty && t('browse.mapEmpty')}
           </p>
-        ) : empty ? (
-          <p className="absolute inset-x-0 top-0 px-3 py-2 text-ink-2">{t('browse.mapEmpty')}</p>
-        ) : null}
+        )}
 
         {hovered && hover && box && (
           <div
