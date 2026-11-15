@@ -9,6 +9,7 @@ import {
   getChildren,
 } from '../lib/ipc'
 import { type BrowseScreen, useStore } from '../store'
+import { Sunburst } from './Sunburst'
 import { Treemap } from './Treemap'
 import { useT } from '../useT'
 import { useLater } from '../useLater'
@@ -31,12 +32,16 @@ const NAME_CHARS = 64
 /** The loading line waits this long, so a quick folder change doesn't flash it. */
 const LOADING_DELAY_MS = 250
 
-type View = 'table' | 'map'
+const VIEWS = ['table', 'map', 'rings'] as const
+type View = (typeof VIEWS)[number]
 const VIEW_KEY = 'cleany.browseView'
+const VIEW_TEXT = { table: 'browse.table', map: 'browse.map', rings: 'browse.rings' } as const
+const HINT_TEXT = { table: 'browse.hint', map: 'browse.mapHint', rings: 'browse.ringsHint' } as const
 
 function initialView(): View {
   try {
-    return localStorage.getItem(VIEW_KEY) === 'map' ? 'map' : 'table'
+    const saved = localStorage.getItem(VIEW_KEY)
+    return VIEWS.find((v) => v === saved) ?? 'table'
   } catch {
     // Storage can be unavailable; the table is the default.
     return 'table'
@@ -89,7 +94,7 @@ export function BrowseView({ screen }: { screen: BrowseScreen }) {
       </h1>
 
       <div role="group" aria-label={t('browse.view')} className="mt-4 flex gap-1 self-start rounded-control border border-hairline bg-card p-0.5">
-        {(['table', 'map'] as const).map((v) => (
+        {VIEWS.map((v) => (
           <button
             key={v}
             type="button"
@@ -99,7 +104,7 @@ export function BrowseView({ screen }: { screen: BrowseScreen }) {
               view === v ? 'bg-raised text-ink' : 'text-ink-2 hover:text-ink'
             }`}
           >
-            {t(v === 'table' ? 'browse.table' : 'browse.map')}
+            {t(VIEW_TEXT[v])}
           </button>
         ))}
       </div>
@@ -116,7 +121,7 @@ export function BrowseView({ screen }: { screen: BrowseScreen }) {
           onUp={up}
           onExit={showSummary}
         />
-      ) : (
+      ) : view === 'map' ? (
         <Treemap
           scan={scan}
           node={node}
@@ -126,9 +131,21 @@ export function BrowseView({ screen }: { screen: BrowseScreen }) {
           onUp={up}
           onExit={showSummary}
         />
+      ) : (
+        <Sunburst
+          scan={scan}
+          node={node}
+          name={name}
+          label={t('browse.ringsLabel', { name })}
+          canGoUp={parent !== undefined}
+          cameFrom={cameFrom}
+          onOpen={open}
+          onUp={up}
+          onExit={showSummary}
+        />
       )}
 
-      <p className="mt-3 text-meta text-ink-3">{t(view === 'table' ? 'browse.hint' : 'browse.mapHint')}</p>
+      <p className="mt-3 text-meta text-ink-3">{t(HINT_TEXT[view])}</p>
     </section>
   )
 }

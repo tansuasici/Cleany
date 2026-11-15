@@ -13,7 +13,7 @@ use tauri::ipc::Channel;
 use access::{AccessError, DiskAccess};
 use session::{
     ChildrenPage, NodeEntry, ScanEvent, ScanId, SessionError, Sessions, SortKey, SortOrder,
-    TreemapSlice,
+    SunburstSlice, TreemapSlice,
 };
 use volumes::VolumeEntry;
 
@@ -95,6 +95,18 @@ fn get_treemap(
     sessions.treemap(scan, node, width, height, depth, min_area)
 }
 
+/// A node's sunburst, `depth` rings deep.
+#[tauri::command(async)]
+fn get_sunburst(
+    sessions: tauri::State<'_, Sessions>,
+    scan: ScanId,
+    node: u32,
+    depth: u8,
+    min_angle: f32,
+) -> Result<SunburstSlice, SessionError> {
+    sessions.sunburst(scan, node, depth, min_angle)
+}
+
 /// A node and its ancestors, root first.
 #[tauri::command(async)]
 fn get_ancestors(
@@ -132,6 +144,7 @@ pub fn run() {
             get_children,
             get_ancestors,
             get_treemap,
+            get_sunburst,
             disk_access,
             open_disk_access_settings
         ])
