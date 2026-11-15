@@ -55,6 +55,36 @@ export interface ChildrenPage {
   items: NodeEntry[]
 }
 
+/** One treemap box, in CSS pixels from the treemap's top left. */
+export interface TreemapCell {
+  /** Node index, or `null` for merged small children ("Diğer N öğe"). */
+  id: number | null
+  /** The folder this cell lies in. */
+  parent: number
+  /** 1 for the node's children, 2 for theirs, and so on. */
+  depth: number
+  x: number
+  y: number
+  w: number
+  h: number
+  allocated: number
+  /** 0 for merged children. */
+  files: number
+  /** Empty for merged children. */
+  name: string
+  /** `null` for merged children. */
+  kind: NodeKind | null
+  hasChildren: boolean
+  /** How many children were merged into this cell; 0 for a node. */
+  others: number
+}
+
+/** A node's treemap; parents come before their children. */
+export interface TreemapSlice {
+  node: NodeEntry
+  cells: TreemapCell[]
+}
+
 export interface ScanStats {
   dirs: number
   files: number
@@ -122,6 +152,18 @@ export const getChildren = (
   offset: number,
   limit: number,
 ) => invoke<ChildrenPage>('get_children', { scan, node, sort, order, offset, limit })
+
+/** Most cells `getTreemap` returns. */
+export const MAX_CELLS = 5000
+/** Deepest treemap the backend lays out. */
+export const MAX_TREEMAP_DEPTH = 3
+
+/**
+ * `node`'s treemap in a `width` × `height` CSS-pixel box, `depth` levels
+ * deep (1–3). Children smaller than `minArea` px² merge into one cell.
+ */
+export const getTreemap = (scan: ScanId, node: number, width: number, height: number, depth = 2, minArea = 24) =>
+  invoke<TreemapSlice>('get_treemap', { scan, node, width, height, depth, minArea })
 
 export const getAncestors = (scan: ScanId, node: number) =>
   invoke<NodeEntry[]>('get_ancestors', { scan, node })

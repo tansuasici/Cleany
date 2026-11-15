@@ -9,6 +9,57 @@ Give the task you are actively working on an `h3` heading under **In Progress** 
 
 ## In Progress
 
+### M3 — Görselleştirme: treemap (Notion #26 → #24)
+
+**Hedef**: Bitmiş bir taramada bir klasör, canvas üzerinde squarified treemap olarak çizilir. Hover bilgi verir, bir bloğa tıklamak içine girer, breadcrumb ile geri dönülür. UI'a yalnızca çizilecek kadar düğüm gider.
+
+**Bağlam**: docs/PLAN.md §3.4 (`get_treemap(node, depth, min_area)`), §3.5 (canvas, DOM ile çizilmez), §9 M3. CLAUDE.project.md: IPC'ye dilim gider, bütün ağaç asla. Sıra: önce #26 (Rust), sonra #24 (UI). İki ayrı PR.
+
+#### PR bölümü
+| PR | Kart | İçerik | Yeni bağımlılık | Onay gereken |
+|---|---|---|---|---|
+| 6 `feat(core): treemap layout and slicing` | #26 | `cleany-core::treemap`: squarified yerleşim + min alan eşiği + derinlik sınırı; `get_treemap` komutu; `ipc.ts` tipleri | yok | core public API'ye yeni modül, yeni IPC komutu |
+| 7 `feat(ui): canvas treemap` | #24 | Canvas bileşeni, hover kartı, tıkla-içine-gir, breadcrumb, Summary/Browse'a "Harita" görünümü | yok (d3-hierarchy eklenmez; yerleşim Rust'ta) | yön/token: blok renkleri, görünümün yeri |
+
+#### Tasarım kararları (PR 6)
+- **Yerleşim Rust'ta yapılır**, `d3-hierarchy` eklenmez. Gerekçe: bağımlılık yok, deterministik ve `cargo test` ile sınanır, UI yalnızca dikdörtgen çizer. Eşik de piksel cinsinden olduğu için yerleşimle aynı yerde olmalı.
+- **İmza**: `get_treemap(scan, node, width, height, depth, minArea) -> TreemapSlice`. `width`/`height` CSS pikseli (squarify en-boy oranına bağlı olduğu için şart). `minArea` px² (varsayılan UI'da ~ 24 px²). `depth` en fazla 3 ile sınırlanır.
+- **Çıktı düz bir liste**: `TreemapSlice { node, cells: Vec<Cell> }`, `Cell { id: Option<u32>, parent: u32, depth: u8, x, y, w, h: f32, allocated, name, kind, hasChildren, others: u32 }`. Ebeveyn, çocuklarından önce gelir; UI sırayla çizer.
+- **Eşik altı kalanlar birleştirilir**: bir ebeveynin `minArea` altındaki çocukları tek bir "Diğer N öğe" hücresinde toplanır (`id: null`, `others: N`). Toplam alan korunur, hiçbir bayt kaybolmaz.
+- **Üst sınır**: dilim başına en fazla `MAX_CELLS = 5_000` hücre (WebKitGTK bütçesi, #27 ölçecek). Sınır aşılırsa derinlik kısaltılır, düğüm atılmaz.
+- **İç boşluk**: her klasör hücresi çocuklarını 1 px içeri çekilmiş bir alana yerleştirir (UI çizgisiyle uyumlu). Klasör başlık şeridi yok; ad hover kartında ve yeterince büyük bloklarda gösterilir.
+- **Boyut**: `allocated` (dökümle aynı). Sıfır baytlık ve hardlink düğümleri (bayt başka yerde sayılmış) yerleşime girmez.
+- Mantık `cleany-core`'da, `session.rs` yalnızca kilit + DTO; `get_children` desenine uyar.
+
+#### Testler (PR 6, önce yazılır)
+- `squarify_preserves_total_area` — çocuk alanları ebeveyn alanının toplamına eşit (ε içinde).
+- `squarify_cells_stay_inside_and_do_not_overlap` — her hücre ebeveyn içinde, ikili kesişim yok.
+- `squarify_aspect_ratio_is_bounded` — eşit boyutlu 16 çocukta en kötü oran ≤ 2.
+- `small_children_merge_into_others` — eşik altı çocuklar tek "Diğer" hücresi, `others` doğru, alanı toplamlarına eşit.
+- `depth_limit_is_respected` / `max_cells_is_respected`.
+- `zero_and_hardlink_nodes_are_skipped`.
+- `empty_and_single_child_dirs` — boş klasör tek hücre, tek çocuk ebeveyni doldurur.
+- `get_treemap_rejects_stale_scan_and_unknown_node` (session).
+- `ipc_ts_mentions_every_serialized_key` yeni anahtarları kapsar.
+
+#### PR 7 (#24) planı — onaylandı 2026-11-15 (`feat/m3-treemap-ui`)
+- **Yön (onaylı)**: blok renkleri kind'a göre değil, derinliğe göre yarı saydam ink tonları (üst üste binince koyulaşır); en büyük blok accent ile tonlanır, gökkuşağı yok. Görünüm Browse ekranında Tablo / Harita anahtarıyla seçilir (seçim tarayıcıda hatırlanır).
+- **Dosyalar**: `ui/src/screens/Treemap.tsx` (yeni: canvas, hover kartı, klavye, gizli liste), `ui/src/screens/Browse.tsx` (anahtar + görünüm seçimi), `ui/src/lib/i18n.ts` (TR/EN metinler). IPC, Rust, token değişikliği yok.
+- **Çizim**: `devicePixelRatio` ölçekli canvas; `ResizeObserver` + 120 ms debounce ile `getTreemap(scan, node, w, h, 2, 24)`; eski yanıtlar düşer. Hücreler `Math.round` ile hizalanır, kardeşler arasında 1 px boşluk kalır. Ad + boyut yalnızca yeterince büyük 1. seviye bloklara yazılır. Renkler CSS değişkenlerinden okunur, tema değişince yeniden çizilir.
+- **Etkileşim**: tıklama, imlecin altındaki 1. seviye klasöre girer. Seçili blok accent çerçeve alır. Hover kartı en derindeki hücreyi gösterir (ad, boyut, pay; "Diğer N öğe"). İçine girerken çocuğun dilimi önceden istenir, `browse(slice.node)` aynı dilimi yeniden kullanır (çift istek yok).
+- **Klavye**: oklar 1. seviye bloklar arasında yöne göre gezer, Enter içine girer, Backspace üst klasör, Esc döküme döner (tablo ile aynı). Üst klasöre çıkınca gelinen blok seçili gelir.
+- **Erişilebilirlik**: odaklanabilir `listbox`, 1. seviye bloklar görünmez `option` olarak (aria-activedescendant); canvas `aria-hidden`.
+- **Durumlar**: yükleniyor (250 ms gecikmeli), hata + yeniden dene, boş klasör.
+- **Doğrulama**: `pnpm --dir ui typecheck/lint/build`; 375/768/1280 × açık/koyu ekran görüntüsü; klavye; `/slop-audit`.
+
+#### Açık sorular
+- Varsayılan `minArea` ve `depth`: öneri 24 px² ve 2 seviye; #27 benchmark'ı sonrası ayarlanır.
+- `/` çift sayım hatası treemap'te de görünür (System + Users şişkin). Ayrı iş, Not Now'da duruyor.
+
+#### Riskler
+- f32 yuvarlama ile 1 px'lik boşluk/taşma: testlerde ε kullanılır, UI'da çizerken `Math.round` hizalaması.
+- Çok geniş klasörlerde (100k çocuk) sıralama maliyeti: `get_children`'daki sıralama önbelleğine benzer şekilde yalnız bir kez sıralanır; ölçülür.
+
 ### M2 — Uygulama kabuğu (Notion #18–#23)
 
 **Hedef**: Uygulama açılınca birimler (volume) listelenir. Kullanıcı bir birimi ya da klasörü tarar, canlı ilerlemeyi görür ve taramayı iptal edebilir. Sonuç sanal bir ağaç tabloda boyuta göre sıralı gelir; tek tıkla klasörün içine girilir (ADR-0004), breadcrumb ile geri çıkılır. UI hiçbir zaman milyonlarca düğüm almaz, yalnızca sayfa sayfa çocuk listesi alır.
