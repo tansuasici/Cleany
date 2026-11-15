@@ -21,6 +21,28 @@ export const ChevronIcon = () => (
   </svg>
 )
 
+export const CheckIcon = () => (
+  <svg {...iconProps}>
+    <path d="M3.5 8.5 6.5 11.5 12.5 4.5" />
+  </svg>
+)
+
+/**
+ * The app icon as the macOS Dock shows it (`assets/icon-macos.svg` without
+ * the margin): brand colors in both themes.
+ */
+export const AppIcon = ({ size = 28 }: { size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 1024 1024" aria-hidden>
+    <rect width="1024" height="1024" rx="230.4" fill="#2547b8" />
+    <g fill="#f7f4ee" transform="translate(51.6 60.4) scale(.882)">
+      <path d="M735.6 226.9A348 348 0 1 0 735.6 797.1L657.6 685.7A212 212 0 1 1 657.6 338.3Z" />
+      <circle cx="779" cy="372" r="50" />
+      <circle cx="816" cy="512" r="50" />
+      <circle cx="779" cy="652" r="50" />
+    </g>
+  </svg>
+)
+
 export const VolumeIcon = () => (
   <svg {...iconProps}>
     <rect x="1.75" y="4.25" width="12.5" height="7.5" rx="1.5" />
