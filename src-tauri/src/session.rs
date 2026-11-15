@@ -18,7 +18,7 @@ use std::thread;
 
 use cleany_core::{
     CancelToken, CellTarget, Node, NodeFlags, NodeId, NodeKind, Progress, ScanError, ScanOptions,
-    ScanResult, Tree, TreemapOptions, scan, treemap,
+    ScanResult, SunburstOptions, Tree, TreemapOptions, scan, sunburst, treemap,
 };
 use serde::{Deserialize, Serialize};
 
@@ -33,6 +33,12 @@ pub const MAX_TREEMAP_DEPTH: u8 = 3;
 
 /// Largest treemap side, in CSS pixels; bigger requests are cut to this.
 pub const MAX_TREEMAP_SIDE: f32 = 16_384.0;
+
+/// Most rings [`Sessions::sunburst`] lays out, in levels below the node.
+pub const MAX_SUNBURST_DEPTH: u8 = 4;
+
+/// Largest `min_angle` [`Sessions::sunburst`] accepts, in turns.
+pub const MAX_SUNBURST_MIN_ANGLE: f32 = 0.5;
 
 /// How many unreadable entries a [`ScanSummary`] lists; the rest are counted.
 pub const MAX_ISSUES: usize = 100;
@@ -171,6 +177,45 @@ pub struct TreemapSlice {
     pub node: NodeEntry,
     /// At most [`MAX_CELLS`] cells.
     pub cells: Vec<TreemapCell>,
+}
+
+/// One slice of a sunburst ring. Angles are in turns (0 to 1), clockwise
+/// from twelve o'clock.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RingArc {
+    /// Node index, or `None` for merged small children.
+    pub id: Option<u32>,
+    /// The folder this slice lies in.
+    pub parent: u32,
+    /// Ring: 1 for the node's children, 2 for theirs, and so on.
+    pub depth: u8,
+    /// Start angle.
+    pub start: f32,
+    /// End angle.
+    pub end: f32,
+    /// Allocated bytes.
+    pub allocated: u64,
+    /// Non-directory entries below (1 for a file, 0 for merged children).
+    pub files: u32,
+    /// Display name; empty for merged children.
+    pub name: String,
+    /// Entry kind; `None` for merged children.
+    pub kind: Option<EntryKind>,
+    /// Whether the node has children to drill into.
+    pub has_children: bool,
+    /// How many children were merged into this slice (0 for a node).
+    pub others: u32,
+}
+
+/// A node's sunburst: the node itself and its slices, parents before children.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SunburstSlice {
+    /// The node at the centre.
+    pub node: NodeEntry,
+    /// At most [`MAX_CELLS`] slices.
+    pub arcs: Vec<RingArc>,
 }
 
 /// Counters of a finished scan.
@@ -581,6 +626,77 @@ impl Sessions {
         })
     }
 
+    /// `node`'s sunburst, `depth` rings deep (1 to [`MAX_SUNBURST_DEPTH`]).
+    /// Children narrower than `min_angle` turns (0 to
+    /// [`MAX_SUNBURST_MIN_ANGLE`]; anything else counts as 0) are merged into
+    /// one slice per folder.
+    ///
+    /// # Errors
+    /// [`SessionError::StaleScan`], [`SessionError::NotReady`] or
+    /// [`SessionError::UnknownNode`].
+    pub fn sunburst(
+        &self,
+        id: ScanId,
+        node: u32,
+        depth: u8,
+        min_angle: f32,
+    ) -> Result<SunburstSlice, SessionError> {
+        let mut state = lock(&self.state);
+        let tree = &state.finished_mut(id)?.tree;
+        let root = tree.node_id(node).ok_or(SessionError::UnknownNode)?;
+        let node_entry = entry(tree, root).ok_or(SessionError::UnknownNode)?;
+        let min_angle = if min_angle.is_finite() {
+            min_angle.clamp(0.0, MAX_SUNBURST_MIN_ANGLE)
+        } else {
+            0.0
+        };
+        let opts = SunburstOptions {
+            depth: depth.clamp(1, MAX_SUNBURST_DEPTH),
+            min_angle,
+            max_arcs: MAX_CELLS,
+        };
+        let arcs = sunburst(tree, root, &opts)
+            .into_iter()
+            .filter_map(|a| {
+                let parent = u32::try_from(a.parent.index()).ok()?;
+                let base = RingArc {
+                    id: None,
+                    parent,
+                    depth: a.depth,
+                    start: a.start,
+                    end: a.end,
+                    allocated: a.allocated,
+                    files: 0,
+                    name: String::new(),
+                    kind: None,
+                    has_children: false,
+                    others: 0,
+                };
+                Some(match a.target {
+                    CellTarget::Node(n) => {
+                        let e = entry(tree, n)?;
+                        RingArc {
+                            id: Some(e.id),
+                            files: e.files,
+                            name: e.name,
+                            kind: Some(e.kind),
+                            has_children: e.has_children,
+                            ..base
+                        }
+                    }
+                    CellTarget::Others { count, .. } => RingArc {
+                        others: count,
+                        ..base
+                    },
+                })
+            })
+            .collect();
+        Ok(SunburstSlice {
+            node: node_entry,
+            arcs,
+        })
+    }
+
     /// `node` and its ancestors, root first, for the breadcrumb.
     ///
     /// # Errors
@@ -740,9 +856,9 @@ fn millis(d: std::time::Duration) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        CancelToken, ChildrenPage, EntryKind, Finished, MAX_TREEMAP_DEPTH, NodeEntry, ScanEvent,
-        ScanId, ScanIssue, ScanStats, ScanSummary, SessionError, Sessions, SortKey, SortOrder,
-        State, TreemapCell, TreemapSlice, lock,
+        CancelToken, ChildrenPage, EntryKind, Finished, MAX_SUNBURST_DEPTH, MAX_TREEMAP_DEPTH,
+        NodeEntry, RingArc, ScanEvent, ScanId, ScanIssue, ScanStats, ScanSummary, SessionError,
+        Sessions, SortKey, SortOrder, State, SunburstSlice, TreemapCell, TreemapSlice, lock,
     };
     use cleany_core::{EntryInfo, NodeFlags, NodeKind, ScanOptions, Size, Tree, TreeBuilder};
     use std::ffi::OsStr;
@@ -1076,6 +1192,41 @@ mod tests {
         assert!(right <= super::MAX_TREEMAP_SIDE + 1.0);
     }
 
+    #[test]
+    fn get_sunburst_rejects_stale_scan_and_unknown_node() {
+        let (s, id) = done(small_tree());
+        assert_eq!(
+            s.sunburst(ScanId(1), 0, 2, 0.004),
+            Err(SessionError::StaleScan)
+        );
+        assert_eq!(s.sunburst(id, 99, 2, 0.004), Err(SessionError::UnknownNode));
+
+        let slice = s.sunburst(id, 0, 9, 0.0).unwrap();
+        assert_eq!(slice.node.id, 0);
+        // b, C, a in ring 1 and C's child x in ring 2.
+        assert_eq!(slice.arcs.len(), 4);
+        assert!(slice.arcs.iter().all(|a| a.depth <= MAX_SUNBURST_DEPTH));
+        let x = slice.arcs.iter().find(|a| a.name == "x").unwrap();
+        assert_eq!((x.depth, x.files, x.kind), (2, 1, Some(EntryKind::File)));
+        let c = slice.arcs.iter().find(|a| a.name == "C").unwrap();
+        assert_eq!(x.parent, c.id.unwrap());
+        assert!(c.has_children);
+        // x fills all of C's span.
+        assert_eq!((x.start, x.end), (c.start, c.end));
+
+        // Depth 0 still lays out one ring.
+        let one = s.sunburst(id, 0, 0, 0.0).unwrap();
+        assert!(one.arcs.iter().all(|a| a.depth == 1));
+        assert_eq!(one.arcs.len(), 3);
+        // A bad or huge angle is clamped, never panics; the first ring always
+        // covers the full turn.
+        for m in [f32::NAN, f32::INFINITY, -1.0, 9.0] {
+            let arcs = s.sunburst(id, 0, 1, m).unwrap().arcs;
+            assert!(!arcs.is_empty());
+            assert_eq!(arcs.last().unwrap().end, 1.0);
+        }
+    }
+
     fn sample_entry() -> NodeEntry {
         NodeEntry {
             id: 3,
@@ -1169,6 +1320,32 @@ mod tests {
             serde_json::to_value(TreemapSlice {
                 node: sample_entry(),
                 cells: vec![cell, others],
+            })
+            .unwrap(),
+        );
+        let arc = RingArc {
+            id: Some(3),
+            parent: 0,
+            depth: 1,
+            start: 0.0,
+            end: 0.5,
+            allocated: 2,
+            files: 4,
+            name: "C".to_owned(),
+            kind: Some(EntryKind::Dir),
+            has_children: true,
+            others: 0,
+        };
+        let rest = RingArc {
+            id: None,
+            kind: None,
+            others: 5,
+            ..arc.clone()
+        };
+        out.push(
+            serde_json::to_value(SunburstSlice {
+                node: sample_entry(),
+                arcs: vec![arc, rest],
             })
             .unwrap(),
         );

@@ -9,6 +9,57 @@ Give the task you are actively working on an `h3` heading under **In Progress** 
 
 ## In Progress
 
+### M3 — Görselleştirme: sunburst (Notion #25)
+
+**Hedef**: Browse'da "Tablo / Harita" yanına üçüncü bir "Halka" görünümü. Klasör merkezde daire, alt klasörler dışa doğru iç içe halkalar (açı = boyut payı), canvas'ta çizilir. Hover bilgi verir, dilime tıklamak içine girer, merkeze tıklamak üst klasöre çıkar, klavyeyle tam kullanılır. Notion kartı boş; kabul ölçütü bu satır.
+
+**Bağlam**: docs/PLAN.md:40 (sunburst alternatif görünüm), :115 (canvas, yerleşim d3-hierarchy ya da Rust), :171 (M3). Treemap (#26/#24) deseni izlenir: yerleşim Rust'ta, UI yalnızca çizer. Tek PR.
+
+#### Tasarım kararları
+- **Yerleşim Rust'ta**, `d3-hierarchy` eklenmez (treemap ile aynı gerekçe: bağımlılık yok, `cargo test` ile sınanır). Sunburst yerleşimi basit: her çocuk, ebeveyninin açı aralığını boyut payına göre böler.
+- **Yeni modül** `cleany-core::sunburst` + **yeni IPC komutu** `get_sunburst(scan, node, depth, minAngle) -> SunburstSlice` *(korumalı: public API + IPC yüzeyi)*.
+- **Açılar tur cinsinden** (0‥1, saat 12'den saat yönünde). Piksel boyutu gerekmez; yarıçapları UI seçer, pencere boyutu değişince yeniden istek atılmaz.
+- **Çıktı düz liste**, ebeveyn çocuklarından önce: `Arc { id: number|null, parent, depth, start, end, allocated, files, name, kind, hasChildren, others }`. Treemap'teki `TreemapCell` alanlarıyla aynı, yalnız `x,y,w,h` yerine `start,end`.
+- **Eşik**: açısı `minAngle` (tur, UI varsayılanı ~0.004 ≈ 1.4°) altında kalan çocuklar tek "Diğer N öğe" dilimine birleşir (`id: null`). Toplam açı korunur. Tek kalan küçük çocuk birleştirilmez (treemap kuralı).
+- **Derinlik**: UI 3 halka ister; üst sınır mevcut `MAX_TREEMAP_DEPTH = 3` yerine ayrı `MAX_SUNBURST_DEPTH = 4`. `MAX_CELLS = 5_000` ortak.
+- Boyut `allocated`; sıfır baytlık ve hardlink düğümleri girmez (treemap ile aynı filtre, ortak yardımcıya taşınmaz — iki küçük kopya, refactor yok).
+
+#### UI kararları
+- `ui/src/screens/Sunburst.tsx`, `Treemap.tsx`'in desenini kopyalar: `role="listbox"` panel + `aria-activedescendant`, sr-only seçenekler (ilk halka), aria-hidden canvas ve hover kartı, `role="alert"` hata + Retry, tek `role="status"` satırı, alt bilgi şeridi.
+- Treemap’teki `useBox`, `useScheme`, `fit` yardımcıları ortak `ui/src/canvas.ts` dosyasına taşınır (Treemap.tsx’ten export edilince oxlint `only-export-components` uyarıyordu).
+- **Renk**: treemap ile aynı yön (DESIGN_MAP onaylı): mürekkep düşük opaklıkta, seviye başına bir adım; yalnız en büyük ilk-halka dilimi accent. Dilimler arasında 1px kart rengi ayırıcı. Yeni token yok.
+- **Merkez**: kart renginde daire, içinde klasör adı + boyutu. Tıklama / Backspace üst klasör.
+- **Klavye**: ←/→ (ve ↑/↓) ilk halkada saat yönünde/tersine dolaşır, Home/End, Enter içine girer, Backspace üst, Esc döküm. Seçili dilim accent kontur.
+- **Hover**: dilim + halka için açı/yarıçap isabet testi; kart treemap'tekiyle aynı.
+- **Görünüm geçişi**: `View = 'table' | 'map' | 'rings'`, localStorage'da hatırlanır. Etiket TR "Halka" / EN "Rings", ipucu satırı `browse.ringsHint`.
+- Animasyon yok (içine girme anında çizilir) — motion kuralı: sık eylem.
+- Küçük ekran: daire `min(w, h)` ile sığar, 375px'te de okunur; dilim etiketi yazılmaz (yalnız hover/şerit), merkez etiketi yazılır.
+
+#### Testler (önce yazılır)
+- `cleany-core::sunburst`:
+  - `children_split_parent_span_by_size` — açılar boyut payıyla orantılı, ardışık, boşluksuz.
+  - `level_spans_add_up_to_parent` — her ebeveynin çocuk aralıkları ebeveyn aralığına eşit (ε içinde).
+  - `small_children_merge_into_others` — eşik altı çocuklar tek "Diğer", `others` sayısı ve açısı doğru.
+  - `single_small_child_is_not_merged`.
+  - `depth_limit_is_respected` / `max_cells_is_respected`.
+  - `zero_and_hardlink_nodes_are_skipped`.
+  - `parents_precede_children`.
+- `src-tauri/session.rs`: `get_sunburst_rejects_stale_scan_and_unknown_node`, `get_sunburst_clamps_depth_and_angle`, DTO serde şekli (`camelCase`, `id: null`).
+- UI: test altyapısı yok → typecheck + lint + build, mock ile tarayıcıda 375/768/1280 × açık/koyu, klavye turu, hata/boş/yükleniyor durumları.
+
+#### Dokunulacak dosyalar
+- `crates/cleany-core/src/sunburst.rs` (yeni), `crates/cleany-core/src/lib.rs` (modül + re-export)
+- `src-tauri/src/session.rs` (DTO + `Sessions::sunburst` + testler), `src-tauri/src/lib.rs` (komut kaydı)
+- `ui/src/lib/ipc.ts` (tipler + `getSunburst`), `ui/src/screens/Sunburst.tsx` (yeni), `ui/src/canvas.ts` (yeni, ortak tuval yardımcıları), `ui/src/screens/Treemap.tsx` (yardımcıları canvas.ts’ten alır), `ui/src/screens/Browse.tsx` (üçüncü görünüm), `ui/src/lib/i18n.ts` (TR/EN metinler)
+- `CODEBASE_MAP.md` gerekirse tek satır.
+
+#### Açık sorular
+- Görünüm adı: "Halka" / "Rings" uygun mu? (Alternatif: "Sunburst" iki dilde de.)
+
+#### Riskler
+- Çok sayıda ince dilimde WebKitGTK çizim süresi — #27 ölçecek; `MAX_CELLS` ve `minAngle` sınırlar.
+- İsabet testi: açı sarması (0/1 sınırı) ve yarıçap halkaları; testte kenar durumları elle denenir.
+
 ### M3 — Görselleştirme: treemap (Notion #26 → #24)
 
 **Hedef**: Bitmiş bir taramada bir klasör, canvas üzerinde squarified treemap olarak çizilir. Hover bilgi verir, bir bloğa tıklamak içine girer, breadcrumb ile geri dönülür. UI'a yalnızca çizilecek kadar düğüm gider.

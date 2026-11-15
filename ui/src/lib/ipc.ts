@@ -85,6 +85,34 @@ export interface TreemapSlice {
   cells: TreemapCell[]
 }
 
+/** One slice of a sunburst ring; angles in turns (0–1), clockwise from 12 o'clock. */
+export interface RingArc {
+  /** Node index, or `null` for merged small children. */
+  id: number | null
+  /** The folder this slice lies in. */
+  parent: number
+  /** Ring: 1 for the node's children, 2 for theirs, and so on. */
+  depth: number
+  start: number
+  end: number
+  allocated: number
+  /** 0 for merged children. */
+  files: number
+  /** Empty for merged children. */
+  name: string
+  /** `null` for merged children. */
+  kind: NodeKind | null
+  hasChildren: boolean
+  /** How many children were merged into this slice; 0 for a node. */
+  others: number
+}
+
+/** A node's sunburst; parents come before their children. */
+export interface SunburstSlice {
+  node: NodeEntry
+  arcs: RingArc[]
+}
+
 export interface ScanStats {
   dirs: number
   files: number
@@ -164,6 +192,16 @@ export const MAX_TREEMAP_DEPTH = 3
  */
 export const getTreemap = (scan: ScanId, node: number, width: number, height: number, depth = 2, minArea = 24) =>
   invoke<TreemapSlice>('get_treemap', { scan, node, width, height, depth, minArea })
+
+/** Most rings the backend lays out. */
+export const MAX_SUNBURST_DEPTH = 4
+
+/**
+ * `node`'s sunburst, `depth` rings deep (1–4). Children narrower than
+ * `minAngle` turns merge into one slice per folder.
+ */
+export const getSunburst = (scan: ScanId, node: number, depth = 3, minAngle = 0.004) =>
+  invoke<SunburstSlice>('get_sunburst', { scan, node, depth, minAngle })
 
 export const getAncestors = (scan: ScanId, node: number) =>
   invoke<NodeEntry[]>('get_ancestors', { scan, node })
