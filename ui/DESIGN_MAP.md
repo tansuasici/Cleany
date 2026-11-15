@@ -13,9 +13,9 @@ Cleany, diski dolan sıradan bir kullanıcıya "yer nereye gitti?" sorusunun cev
 
 - **Kind:** app screen (worked in). Masaüstü uygulama penceresi, Tauri 2 webview.
 - **Audience:** genel kullanıcılar. Yol, bayt, inode gibi teknik ayrıntılar arka planda kalır, istenince görünür. Geliştirici önbellekleri (node_modules, DerivedData, Docker) özellik olarak var, ama dil ve ton geliştiriciye göre ayarlanmaz.
-- **Existing brand:** yok, sıfırdan başlanıyor. `ui/public/favicon.svg` (lacivert zemin, gök mavisi / mor / yeşil treemap blokları) yer tutucu, bağlayıcı değil. Logo sonra.
+- **Existing brand:** "Halka" işareti: C ve üç noktalı bir sıra. Genel logo, yuvarlak köşeli mavi rozet (#2547b8 zemin, #f7f4ee işaret, köşe yarıçapı kenarın %22,5'i): navbar, favicon ve uygulama ikonu aynı rozeti kullanır. Rozetsiz işaret (`assets/logo*.svg`) yalnızca rozetin sığmadığı tek renk yerler için.
 - **Constraints:** React 19 + TypeScript + Tailwind v4 (`ui/src/index.css`). M2'de bileşen kütüphanesi yok (shadcn eklenmiyor). Açık ve koyu tema. TR/EN, RTL yok. macOS / Windows / Linux. En zayıf webview Linux WebKitGTK, efekt bütçesi ona göre belirlenir. Erişilebilirlik hedefi: WCAG 2.1 AA (2026-11-14 onaylandı).
-- **Assets that exist:** yalnızca yer tutucu favicon ve `src-tauri/icons/*` (aynı yer tutucu). Ekran görüntüsü, fotoğraf, illüstrasyon yok.
+- **Assets that exist:** `assets/` (logo ve ikon SVG'leri), `ui/public/favicon.svg`, `src-tauri/icons/*` (macOS plakalı, Windows tam dolu). Ekran görüntüsü, fotoğraf, illüstrasyon yok.
 
 ## Character
 Sakin, hesap verir gibi net, dürüst. (Yön A "Döküm fişi", 2026-11-14 onaylandı.)

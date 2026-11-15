@@ -36,9 +36,9 @@ export const AppIcon = ({ size = 28 }: { size?: number }) => (
     <rect width="1024" height="1024" rx="230.4" fill="#2547b8" />
     <g fill="#f7f4ee" transform="translate(51.6 60.4) scale(.882)">
       <path d="M735.6 226.9A348 348 0 1 0 735.6 797.1L657.6 685.7A212 212 0 1 1 657.6 338.3Z" />
-      <circle cx="779" cy="372" r="40" />
-      <circle cx="816" cy="512" r="40" />
-      <circle cx="779" cy="652" r="40" />
+      <circle cx="779" cy="372" r="50" />
+      <circle cx="816" cy="512" r="50" />
+      <circle cx="779" cy="652" r="50" />
     </g>
   </svg>
 )
