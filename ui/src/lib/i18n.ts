@@ -100,6 +100,10 @@ const tr = {
   'browse.fileCount': (p: Count) => `${p.n} dosya`,
   'browse.mapEmpty': 'Bu klasörde haritada gösterilecek bir boyut yok.',
   'browse.mapHint': 'Oklarla blok seç, Enter ya da tıklamayla içine gir, Backspace ile üst klasöre çık, Esc ile döküme dön.',
+  'browse.rings': 'Halka',
+  'browse.ringsLabel': (p: { name: string }) => `${p.name} halkaları`,
+  'browse.ringsEmpty': 'Bu klasörde halkada gösterilecek bir boyut yok.',
+  'browse.ringsHint': '← → ile dilim seç, Enter ya da tıklamayla içine gir, ortaya tıkla ya da Backspace ile üst klasöre çık, Esc ile döküme dön.',
 
   'ago.now': 'az önce',
   'duration.seconds': (p: { s: string }) => `${p.s} sn`,
@@ -209,6 +213,10 @@ const en: Dict = {
   'browse.fileCount': (p) => `${p.n} ${p.count === 1 ? 'file' : 'files'}`,
   'browse.mapEmpty': 'Nothing in this folder takes up space to map.',
   'browse.mapHint': 'Arrows to pick a block, Enter or click to open, Backspace to go up, Esc for the breakdown.',
+  'browse.rings': 'Rings',
+  'browse.ringsLabel': (p) => `Rings of ${p.name}`,
+  'browse.ringsEmpty': 'Nothing in this folder takes up space to show.',
+  'browse.ringsHint': '← → to pick a slice, Enter or click to open, click the centre or Backspace to go up, Esc for the breakdown.',
 
   'ago.now': 'just now',
   'duration.seconds': (p) => `${p.s} s`,
