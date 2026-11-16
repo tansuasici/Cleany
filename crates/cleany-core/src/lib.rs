@@ -1,15 +1,20 @@
 //! Cleany core: scan data model, aggregation and analysis.
 //!
 //! The arena tree lives in [`tree`], the parallel scanner in [`scan`]
-//! (see docs/PLAN.md §3), the treemap layout in [`mod@treemap`] and the
+//! (see docs/PLAN.md §3), live in-place updates of a finished scan in
+//! [`refresh`], the treemap layout in [`mod@treemap`] and the
 //! sunburst layout in [`mod@sunburst`].
 
 mod names;
+pub mod refresh;
 pub mod scan;
 pub mod sunburst;
 pub mod tree;
 pub mod treemap;
 
+pub use refresh::{
+    Applied, Change, Coalescer, Depth, DirRequest, DirUpdate, Outcome, RefreshPlan, refresh_dir,
+};
 pub use scan::{
     CancelToken, PROGRESS_INTERVAL, Progress, ScanError, ScanIssue, ScanOptions, ScanResult,
     ScanStats, scan,

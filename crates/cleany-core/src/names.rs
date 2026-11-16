@@ -52,6 +52,27 @@ impl NamePool {
             .get(start..end)
             .map_or_else(OsString::new, from_units)
     }
+
+    /// Whether the name stored at `(off, len)` equals `name`, without allocating.
+    pub(crate) fn matches(&self, off: u32, len: u16, name: &OsStr) -> bool {
+        let start = off as usize;
+        let end = start + usize::from(len);
+        self.buf
+            .get(start..end)
+            .is_some_and(|units| units_eq(units, name))
+    }
+}
+
+#[cfg(unix)]
+fn units_eq(units: &[Unit], name: &OsStr) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    units == name.as_bytes()
+}
+
+#[cfg(windows)]
+fn units_eq(units: &[Unit], name: &OsStr) -> bool {
+    use std::os::windows::ffi::OsStrExt;
+    units.iter().copied().eq(name.encode_wide())
 }
 
 #[cfg(unix)]

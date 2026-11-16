@@ -285,3 +285,27 @@ fn junction_is_not_followed() {
     assert!(!flat.contains_key(&link.join("one.txt")));
     assert_eq!(res.stats.symlinks, 1);
 }
+
+#[test]
+fn subtree_scan_respects_original_root_device() {
+    let tmp = tempfile::tempdir().unwrap();
+    fs::create_dir_all(tmp.path().join("a/b")).unwrap();
+    write(&tmp.path().join("a/f"), 10);
+    let dev = read_meta(tmp.path()).unwrap().dev;
+    // Pretend the original scan's root lives on another device: every
+    // subdirectory then counts as a mount point and is not entered.
+    let options = ScanOptions {
+        root_dev: Some(dev.wrapping_add(1)),
+        ..opts(2)
+    };
+    let res = scan_ok(&tmp.path().join("a"), &options);
+    assert_eq!(res.root_dev, dev.wrapping_add(1));
+    assert_eq!(res.stats.skipped_mounts, 1);
+    let b = res.tree.lookup(&tmp.path().join("a/b")).unwrap();
+    assert_eq!(res.tree.children(b).count(), 0);
+    assert_eq!(res.tree.node(res.tree.root()).unwrap().file_count(), 1);
+
+    let own = scan_ok(&tmp.path().join("a"), &opts(2));
+    assert_eq!(own.root_dev, dev);
+    assert_eq!(own.stats.skipped_mounts, 0);
+}

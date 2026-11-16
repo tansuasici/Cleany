@@ -37,6 +37,11 @@ pub struct ScanOptions {
     pub cross_mounts: bool,
     /// Worker threads; `None` uses one per logical CPU.
     pub threads: Option<NonZeroUsize>,
+    /// Device that counts as "this volume" for `cross_mounts`. `None` uses
+    /// the scanned root's own device. A rescan of a subtree passes the
+    /// original scan's [`ScanResult::root_dev`] so mount boundaries stay
+    /// the same as in the first scan.
+    pub root_dev: Option<u64>,
 }
 
 /// Cooperative cancellation flag shared with a running [`scan`].
@@ -115,6 +120,9 @@ pub struct ScanResult {
     pub issues: Vec<ScanIssue>,
     /// Counters.
     pub stats: ScanStats,
+    /// Device the mount boundary was checked against (see
+    /// [`ScanOptions::root_dev`]).
+    pub root_dev: u64,
 }
 
 /// Errors that abort a [`scan`].
@@ -198,12 +206,14 @@ where
         meta = read_meta(&walk_root).map_err(root_err)?;
     }
 
+    let root_dev = opts.root_dev.unwrap_or(meta.dev);
     let mut state = Builder {
         tree: TreeBuilder::new(root.as_os_str(), entry_info(&meta))?,
         issues: Vec::new(),
         stats: ScanStats::default(),
         allocated: 0,
         links: HashMap::new(),
+        root_dev,
     };
     let root_id = state.tree.root();
     state.record(root_id, &meta);
@@ -241,7 +251,7 @@ where
             Err(RecvTimeoutError::Disconnected) => break,
         };
         pending -= 1;
-        for (id, path) in state.apply(listing, meta.dev, opts.cross_mounts)? {
+        for (id, path) in state.apply(listing, opts.cross_mounts)? {
             spawn(id, path);
             pending += 1;
         }
@@ -262,6 +272,8 @@ struct Builder {
     allocated: u64,
     /// Files with more than one link, by `(dev, file_id)`.
     links: HashMap<(u64, u64), Vec<NodeId>>,
+    /// See [`ScanOptions::root_dev`].
+    root_dev: u64,
 }
 
 impl Builder {
@@ -294,7 +306,6 @@ impl Builder {
     fn apply(
         &mut self,
         listing: Listing,
-        root_dev: u64,
         cross_mounts: bool,
     ) -> Result<Vec<(NodeId, PathBuf)>, TreeError> {
         let Listing { dir, path, read } = listing;
@@ -327,7 +338,7 @@ impl Builder {
             if meta.kind == EntryKind::Dir {
                 if meta.placeholder {
                     // Listing a dataless directory can start a download.
-                } else if cross_mounts || meta.dev == root_dev {
+                } else if cross_mounts || meta.dev == self.root_dev {
                     subdirs.push((id, path.join(&name)));
                 } else {
                     self.stats.skipped_mounts += 1;
@@ -370,6 +381,7 @@ impl Builder {
             tree: self.tree.finish(),
             issues: self.issues,
             stats: self.stats,
+            root_dev: self.root_dev,
         })
     }
 }
@@ -438,7 +450,7 @@ fn list_dir(path: &Path) -> io::Result<DirRead> {
     Ok(read)
 }
 
-fn entry_info(meta: &EntryMeta) -> EntryInfo {
+pub(crate) fn entry_info(meta: &EntryMeta) -> EntryInfo {
     EntryInfo {
         kind: meta.kind.into(),
         size: Size {
