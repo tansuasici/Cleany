@@ -1,7 +1,8 @@
-import { type SyntheticEvent, useEffect, useId, useRef, useState } from 'react'
+import { type ReactNode, type SyntheticEvent, useEffect, useId, useRef, useState } from 'react'
 import { Button, LeaderRow } from '../components/ui'
 import { formatBytes, formatCount } from '../lib/format'
 import { type NodeEntry, type ScanId, getAncestors } from '../lib/ipc'
+import type { BasketItem } from '../store'
 import type { Os } from '../useOs'
 import { useT } from '../useT'
 import type { ActionTarget, Actions } from './useBrowseActions'
@@ -20,20 +21,25 @@ export interface TrashNote {
   alert: string
 }
 
-/** The four actions under the view, with their feedback lines. */
+/** The actions under the view, with their feedback lines. */
 export function ActionBar({
   target,
   actions,
   os,
   canTrash,
   onTrash,
+  inBasket,
+  onBasket,
   note,
 }: {
   target: ActionTarget
   actions: Actions
   os: Os | null
+  /** Off for the scan root; it can go neither to the trash nor to the basket. */
   canTrash: boolean
   onTrash: () => void
+  inBasket: boolean
+  onBasket: () => void
   note: TrashNote | null
 }) {
   const { t } = useT()
@@ -74,6 +80,16 @@ export function ActionBar({
           {t('actions.trash')}
           <Kbd>{mac ? '⌘⌫' : 'Delete'}</Kbd>
         </Button>
+        <Button
+          onClick={onBasket}
+          disabled={!canTrash}
+          title={canTrash ? undefined : t('basket.root')}
+          aria-describedby="browse-action-target"
+          aria-keyshortcuts="Space"
+        >
+          {t(inBasket ? 'basket.remove' : 'basket.add')}
+          <Kbd>{t('basket.key')}</Kbd>
+        </Button>
       </div>
       {/* Both regions stay mounted so a change is announced. Shown at once:
           the feedback answers a keypress, and keys don't animate. */}
@@ -88,11 +104,75 @@ export function ActionBar({
 }
 
 /**
- * Asks before moving `target` to the trash. A native modal: focus stays
- * inside, Escape cancels (not while moving), and focus goes back to where it
- * was if that is still on the page. Opened by key as often as by mouse, so it
+ * The frame both trash questions share. A native modal: focus stays inside,
+ * Escape cancels (not while moving), and focus goes back to where it was if
+ * that is still on the page. Opened by key as often as by mouse, so it
  * appears without animation.
  */
+function TrashConfirm({
+  title,
+  children,
+  working,
+  onCancel,
+  onConfirm,
+}: {
+  title: string
+  children: ReactNode
+  working: boolean
+  onCancel: () => void
+  onConfirm: () => void
+}) {
+  const { t } = useT()
+  const ref = useRef<HTMLDialogElement>(null)
+  const titleId = useId()
+  const detailId = useId()
+
+  useEffect(() => {
+    const dialog = ref.current
+    const before = document.activeElement as HTMLElement | null
+    dialog?.showModal()
+    return () => {
+      dialog?.close()
+      // A view that was rebuilt focuses itself; otherwise go back.
+      if (before?.isConnected) before.focus()
+    }
+  }, [])
+
+  const cancel = (e: SyntheticEvent) => {
+    e.preventDefault()
+    if (!working) onCancel()
+  }
+
+  return (
+    <dialog
+      ref={ref}
+      aria-labelledby={titleId}
+      aria-describedby={detailId}
+      onCancel={cancel}
+      className="m-auto w-[calc(100%-2rem)] max-w-104 rounded-panel border border-dialog-edge bg-card p-6 text-ink shadow-dialog backdrop:bg-deepest/40"
+    >
+      <h2 id={titleId} className="text-strong font-medium break-words">
+        {title}
+      </h2>
+      <div id={detailId} className="mt-2 flex flex-col text-body text-ink-2">
+        {children}
+        <p className="mt-4">{t('trash.undo')}</p>
+      </div>
+      <div className="mt-6 flex flex-wrap justify-end gap-2">
+        {/* First in the dialog, so focus lands on the safe choice. */}
+        <Button onClick={onCancel} disabled={working} autoFocus>
+          {t('trash.cancel')}
+          <Kbd>Esc</Kbd>
+        </Button>
+        <Button variant="primary" onClick={onConfirm} disabled={working} aria-busy={working}>
+          {working ? t('trash.working') : t('trash.confirm')}
+        </Button>
+      </div>
+    </dialog>
+  )
+}
+
+/** Asks before moving `target` to the trash. */
 export function TrashDialog({
   scan,
   target,
@@ -107,21 +187,7 @@ export function TrashDialog({
   onConfirm: () => void
 }) {
   const { t, locale } = useT()
-  const ref = useRef<HTMLDialogElement>(null)
-  const titleId = useId()
-  const detailId = useId()
   const [entry, setEntry] = useState<NodeEntry | null>(null)
-
-  useEffect(() => {
-    const dialog = ref.current
-    const before = document.activeElement as HTMLElement | null
-    dialog?.showModal()
-    return () => {
-      dialog?.close()
-      // A view that was rebuilt focuses itself; otherwise go back.
-      if (before?.isConnected) before.focus()
-    }
-  }, [])
 
   // Size and file count, from the tree as it is now.
   useEffect(() => {
@@ -135,11 +201,6 @@ export function TrashDialog({
     }
   }, [scan, target.id])
 
-  const cancel = (e: SyntheticEvent) => {
-    e.preventDefault()
-    if (!working) onCancel()
-  }
-
   const detail =
     entry === null
       ? ''
@@ -150,34 +211,51 @@ export function TrashDialog({
         : t('trash.file')
 
   return (
-    <dialog
-      ref={ref}
-      aria-labelledby={titleId}
-      aria-describedby={detailId}
-      onCancel={cancel}
-      className="m-auto w-[calc(100%-2rem)] max-w-104 rounded-panel border border-dialog-edge bg-card p-6 text-ink shadow-dialog backdrop:bg-deepest/40"
-    >
-      <h2 id={titleId} className="text-strong font-medium break-words">
-        {t('trash.title', { name: target.name })}
-      </h2>
-      <div id={detailId} className="mt-2 flex flex-col text-body text-ink-2">
-        <p className="min-h-5 tabular-nums">{detail}</p>
-        {/* The döküm's line, once: what this move gives back. */}
-        <p className="mt-4 min-h-5 text-ink">
-          {entry && <LeaderRow name={t('trash.space')} value={formatBytes(entry.allocated, locale)} strong />}
-        </p>
-        <p className="mt-4">{t('trash.undo')}</p>
-      </div>
-      <div className="mt-6 flex flex-wrap justify-end gap-2">
-        {/* First in the dialog, so focus lands on the safe choice. */}
-        <Button onClick={onCancel} disabled={working} autoFocus>
-          {t('trash.cancel')}
-          <Kbd>Esc</Kbd>
-        </Button>
-        <Button variant="primary" onClick={onConfirm} disabled={working} aria-busy={working}>
-          {working ? t('trash.working') : t('trash.confirm')}
-        </Button>
-      </div>
-    </dialog>
+    <TrashConfirm title={t('trash.title', { name: target.name })} working={working} onCancel={onCancel} onConfirm={onConfirm}>
+      <p className="min-h-5 tabular-nums">{detail}</p>
+      {/* The döküm's line, once: what this move gives back. */}
+      <p className="mt-4 min-h-5 text-ink">
+        {entry && <LeaderRow name={t('trash.space')} value={formatBytes(entry.allocated, locale)} strong />}
+      </p>
+    </TrashConfirm>
+  )
+}
+
+/** How many basket items the question names before "+k more". */
+const LISTED = 5
+
+/** Asks before moving every basket item to the trash. */
+export function BasketTrashDialog({
+  items,
+  working,
+  onCancel,
+  onConfirm,
+}: {
+  items: BasketItem[]
+  working: boolean
+  onCancel: () => void
+  onConfirm: () => void
+}) {
+  const { t, locale } = useT()
+  const count = items.length
+  const n = formatCount(count, locale)
+  const total = items.reduce((sum, item) => sum + item.allocated, 0)
+  const rest = count - LISTED
+  return (
+    <TrashConfirm title={t('basket.trashTitle', { n, count })} working={working} onCancel={onCancel} onConfirm={onConfirm}>
+      <ul className="flex flex-col">
+        {items.slice(0, LISTED).map((item) => (
+          <li key={item.id} className="h-6 leading-6">
+            <LeaderRow name={item.name} title={item.name} value={formatBytes(item.allocated, locale)} />
+          </li>
+        ))}
+        {rest > 0 && (
+          <li className="h-6 leading-6">{t('basket.more', { n: formatCount(rest, locale), count: rest })}</li>
+        )}
+      </ul>
+      <p className="mt-4 text-ink">
+        <LeaderRow name={t('trash.space')} value={formatBytes(total, locale)} strong />
+      </p>
+    </TrashConfirm>
   )
 }
