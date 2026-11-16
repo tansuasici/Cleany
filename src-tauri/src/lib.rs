@@ -15,7 +15,7 @@ use access::{AccessError, DiskAccess};
 use actions::ActionError;
 use session::{
     ChildrenPage, NodeEntry, ScanEvent, ScanId, SessionError, Sessions, SortKey, SortOrder,
-    SunburstSlice, TreemapSlice,
+    SunburstSlice, TrashReport, TreemapSlice,
 };
 use volumes::VolumeEntry;
 
@@ -149,6 +149,17 @@ fn get_path(
     actions::path_text(&sessions, scan, node)
 }
 
+/// Moves the nodes to the OS trash and reports what happened to each. The
+/// UI confirms first; this command never asks.
+#[tauri::command(async)]
+fn trash_nodes(
+    sessions: tauri::State<'_, Sessions>,
+    scan: ScanId,
+    nodes: Vec<u32>,
+) -> Result<TrashReport, ActionError> {
+    actions::trash(&sessions, scan, &nodes)
+}
+
 /// Best-effort macOS Full Disk Access status; `notApplicable` elsewhere.
 #[tauri::command(async)]
 fn disk_access() -> DiskAccess {
@@ -180,6 +191,7 @@ pub fn run() {
             reveal_node,
             open_node,
             get_path,
+            trash_nodes,
             disk_access,
             open_disk_access_settings
         ])

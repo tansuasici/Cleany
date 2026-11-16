@@ -9,14 +9,165 @@ Give the task you are actively working on an `h3` heading under **In Progress** 
 
 ## In Progress
 
-### M4 — Göster / aç / yolu kopyala (Notion #29)
+### M4 — Çöpe taşı (varsayılan) + sonuç raporu (Notion #30)
+
+**Hedef**: Browse'da seçili öğe çöpe taşınabilsin: macOS'ta Çöp Sepeti, Windows'ta Geri Dönüşüm Kutusu, Linux'ta freedesktop çöpü. Taşımadan önce bir onay penceresi açılır. İşlem bitince bir sonuç raporu gösterilir: ne taşındı, ne kadar alan boşaldı, ne başarısız oldu. Ağaç ve boyutlar yeniden tarama gerekmeden güncellenir. Notion kartı boş; kabul ölçütü bu satır.
+
+**Bağlam**:
+- docs/PLAN.md:44, :61 (silme tek tıkla olmaz), :110 (`trash(nodes) -> Report`), :129 (`trash` crate adayı), :185.
+- Komşu kartlar:
+  - #31 kalıcı silme;
+  - #32 korumalı yollar listesi ve silme logu;
+  - #33 seçim sepeti;
+  - #34 capability daraltma.
+- Bu PR tek öğeyle çalışır, ama IPC baştan çoklu düğüm alır; sepet (#33) aynı komutu kullanacak.
+- #29'un `(scan, node)` deseni ve `ActionBar` yeniden kullanılır. Dal `feat/m4-trash`.
+
+#### Tasarım kararları
+- **Bağımlılık: `trash` crate 5.3 (onay gerekir, önerilen).**
+  - Platform kodu:
+    - macOS'ta varsayılan yöntem Finder üzerinden çalışır; bu yöntem "Geri Koy"u destekler.
+    - Windows'ta `IFileOperation` kullanır.
+    - Linux'ta freedesktop çöp spesifikasyonunu uygular; bağlı disklerde `.Trash-uid` desteği vardır.
+  - Yalnız `cleany-platform`'a eklenir.
+  - Doğrulanacak: macOS'ta varsayılan yöntem Finder/AppleScript ise paketlenmiş uygulama `NSAppleEventsUsageDescription` ister. Bu, `tauri.conf.json` / Info.plist değişikliğidir (bundle yapılandırması, onay).
+  - Alternatif olarak komut satırı kullanılabilir: `osascript` + Finder, PowerShell `Microsoft.VisualBasic.FileIO`, `gio trash`. Bu yolda bağımlılık yoktur, ama Windows'ta yavaştır, Linux'ta `gio` gerekir ve hata ayrıntıları zayıftır.
+- **Genel API değişiklikleri (onay):** `cleany-core`'da `Tree::detach`, `Removed`, `NodeFlags::DETACHED`; `cleany-platform`'da `trash` modülü (`trash`, `is_protected`).
+- **Yol yine UI'dan gelmez.** Yeni IPC (genel API, onay):
+  - Komut: `trash_nodes(scan, nodes: number[]) -> TrashReport`.
+  - Rapor: `{ items: [{ node, name, outcome }], freed: Size, trashed: number }`.
+  - `outcome` değerleri: `trashed | gone | protected | failed{message}`.
+  - Komut düzeyindeki hatalar (`staleScan`, `notReady`, `unknownNode`) mevcut `ActionError` ile döner.
+- **İç içe seçim tekilleştirilir.** Listede bir düğüm ile onun atası birlikte varsa yalnız ata taşınır.
+- **Asgari koruma, bu PR'da sabit kodlanır:**
+  - taramanın kökü;
+  - dosya sistemi kökleri (`/`, `C:\`);
+  - ev dizini ve onun her atası (`/Users`, `/home`).
+  - Bunlar `protected` döner ve dokunulmaz.
+  - Diskteki öğenin türü taramadakinden farklıysa (klasör artık dosya, ya da tersi) `failed` döner ve taşınmaz.
+  - Tam korumalı yollar listesi (`/System`, `/usr`, `C:\Windows`…) ve silme logu #32'de gelir (açık soru 2).
+- **Ağacın güncellenmesi:**
+  - `cleany-core`'a `Tree::detach(id) -> Option<Removed { size, files }>` eklenir.
+  - Düğüm ebeveyninin kardeş zincirinden çıkarılır. Boyutu ve dosya sayısı tüm atalardan düşülür.
+  - Arena'dan silinmez; id'ler kararlı kalır. Kopmuş düğüme `NodeFlags::DETACHED` (boş bit; 48 bayt testi korunur) konur.
+  - `Tree::node_id` kopmuş düğümü ve kopmuş bir atanın altındaki düğümleri reddeder; bunun için ata zinciri yürünür. Böylece `path` ve `children` gerçekten `UnknownNode` döner.
+  - Ardından `Finished.sorted` önbelleği temizlenir.
+  - Sınır: sabit bağlantılar (hardlink) için yaklaşık bir değerdir (açık "Riskler").
+- **Taşıma kilit dışında yapılır.** Kilit altında yollar toplanır, ardından kilit bırakılır. Taşıma bittikten sonra kilit yeniden alınır; tarama hâlâ aynıysa kopmuş düğümler uygulanır. Bu arada yeni bir tarama başlamışsa rapor yine döner, ama ağaca dokunulmaz.
+- **Kopmuş düğüme yönelik istekler:**
+  - `path` / `children` gibi istekler `UnknownNode` döner.
+  - UI, gezilen klasör çöpe gittiyse en yakın canlı ataya döner.
+
+#### UI kararları
+- **Eylem:** `ActionBar`'a dördüncü düğme "Çöpe taşı" eklenir:
+  - Kısayolu macOS'ta `⌘⌫`, diğerlerinde `Delete`'tir (açık soru 3).
+  - Hedef, #29'daki gibi seçili öğedir. Hiçbir öğe seçili değilse ya da hedef taramanın köküyse düğme devre dışıdır.
+- **Onay penceresi:**
+  - Yerel `<dialog>` + `showModal()` kullanılır; odak tuzağı ve Esc tarayıcıdan gelir.
+  - Başlık: "„X“ çöpe taşınsın mı?". Altında boyut ve klasörse dosya sayısı yazar.
+  - Düğmeler "Vazgeç" ve "Çöpe taşı"dır; ilk odak "Vazgeç"tedir.
+  - Kısayol yalnız pencereyi açar, hiçbir zaman doğrudan taşımaz.
+  - Taşıma sürerken düğme "Taşınıyor…" olur ve devre dışı kalır.
+- **Sonuç raporu:**
+  - `ActionBar`'ın `role=status` satırına tek satırlık rapor yazılır: "„X“ çöpe taşındı · 1,2 GB boşaldı".
+  - Başarısız ya da korumalı öğeler `role=alert` satırında nedeniyle birlikte gösterilir.
+  - Çoklu rapor düzeni (liste) sepetle birlikte #33'te gelir.
+- **Görünüm yenilenir:** Tablo, Harita ve Halka mevcut klasörü yeniden ister. Üst bilgideki toplam `done.summary` içinden geldiği için rapor yeni kök toplamlarını (`root: NodeEntry`) da taşır, UI özetteki kökü bununla değiştirir.
+- **Hareket:** pencere için 150 ms ease-out opacity + `scale(0.98→1)` kullanılır, reduced-motion'da anında açılır. Rapor satırı canlandırılmaz.
+- **Yeni token yok.** Pencere mevcut yüzey, kenarlık ve yarıçap token'larını kullanır. Tehlike rengi eklenmez; "Çöpe taşı" düğmesi birincil stildedir.
+
+#### Testler (önce yazılır)
+- `tree::tests::detach_*`:
+  - atalardan boyut ve dosya sayısı düşer;
+  - düğüm `children` listesinden çıkar;
+  - iki kez detach edilen düğüm `None` döner;
+  - kök detach edilemez.
+- `session::tests::trash_*` (sahte çöp fonksiyonu enjekte edilir):
+  - rapor doğru;
+  - iç içe seçim tekilleştirilir;
+  - kök/ev `protected` döner;
+  - yok olmuş yol `gone` döner;
+  - taşıma sırasında yeni tarama başlarsa ağaç değişmez.
+- `trash::tests::*` (platform): `is_protected` için kök, ev ve sürücü kökü örnekleri.
+- Gerçek çöpe taşıma: `temp_dir` altında bir dosya oluşturulur, taşınır, sonra yolun yok olduğu doğrulanır. Bu test `#[ignore]` olur, elle çalıştırılır; CI'da masaüstü çöpü olmayabilir.
+- `actions::tests::ipc_ts_mentions_every_action_tag`: `'trash_nodes'` ve `outcome` etiketleriyle genişletilir.
+- UI tarayıcı mock'uyla denenir:
+  - onay, vazgeç, Esc;
+  - rapor ve hata satırları;
+  - görünümün yenilenmesi;
+  - 375/768/1280, açık/koyu, klavye.
+- Paketlenmiş `Cleany.app`'te geçici bir klasörle gerçek bir deneme yapılır; Finder'da "Geri Koy" çalışmalı.
+
+#### Dokunulacak dosyalar
+- `crates/cleany-core/src/tree.rs`: `Tree::detach`, `Removed`.
+- `crates/cleany-platform/Cargo.toml` + `Cargo.lock`: `trash` (onay).
+- `crates/cleany-platform/src/trash.rs` (yeni), `lib.rs`: `trash(path)`, `is_protected(path, scan_root)`.
+- `src-tauri/tauri.conf.json` (gerekirse): `NSAppleEventsUsageDescription` (onay).
+- `src-tauri/src/session.rs`: `Sessions::trash(scan, nodes, mover)`, `TrashReport`.
+- `src-tauri/src/actions.rs`, `src-tauri/src/lib.rs`: `trash_nodes` komutu.
+- `ui/src/lib/ipc.ts`: türler ve `trashNodes`.
+- `ui/src/screens/BrowseActions.tsx`, `useBrowseActions.ts`: düğme, kısayol, onay penceresi, rapor.
+- `ui/src/screens/Browse.tsx`: yenileme ve kopmuş klasörden ataya dönüş.
+- `ui/src/lib/i18n.ts`: TR/EN metinler.
+- `tasks/todo.md`: bu plan; #29 Done'a taşındı.
+
+#### Açık sorular
+1. Bağımlılık: `trash` crate 5.3 mü (önerilen), yoksa komut satırı mı?
+2. Asgari koruma (tarama kökü, `/` ve sürücü kökleri, ev dizini) bu PR'da yeterli mi? Tam liste ve log #32'de gelecek. Alternatif: #32'yi önce yapmak.
+3. Kısayol: macOS'ta `⌘⌫`, diğerlerinde `Delete` uygun mu? Finder ile aynıdır ve her zaman onay penceresi açar.
+4. Onay her seferinde gösterilsin mi? Önerim: evet. "Bir daha sorma" seçeneği eklenmez (PLAN.md:61).
+
+#### Riskler
+- **macOS Finder yöntemi otomasyon izni isteyebilir.** İlk kullanımda "Cleany, Finder'ı denetlemek istiyor" sorusu çıkabilir. Reddedilirse `failed` döner ve mesajı gösterilir. Gerekirse `trash` crate'in `NsFileManager` yöntemine geçilir; o yöntemde soru çıkmaz, ama "Geri Koy" çalışmaz. Paketlenmiş uygulamada denenecek.
+- **Hardlink ve klon (APFS) boyutları:** "boşaldı" değeri taramadaki ayrılmış boyuttur. Gerçek kazanç daha az olabilir; metinde "yaklaşık" demek gerekebilir.
+- **Uzun süren taşıma** (çok dosyalı büyük klasör, Linux'ta farklı disk): komut `async` çalışır, UI'yı kilitlemez. İptal yoktur, ilerleme gösterilmez.
+- **Windows ve Linux'ta elle deneme yok.** Yalnız CI derlemesi ve birim testleri var.
+
+#### Uygulama durumu (2026-11-16, dal `feat/m4-trash`, commit yok)
+Açık soruların hepsi önerildiği gibi onaylandı. Plandan sapmalar:
+- **macOS yöntemi `NsFileManager`** (kullanıcı kararı). Otomasyon izni sorulmaz, `tauri.conf.json`'a dokunulmadı. Bedeli: Finder'da "Geri Koy" yok; diyalog metni yalnız "çöpten geri alınabilir" der.
+- **Koruma genişledi** (kullanıcı kararı):
+  - bağlama noktası olan ya da içeren klasörler `protected` döner;
+  - indirilmemiş bulut yer tutucusu (iCloud/OneDrive) olan ya da içeren düğümler de `protected` döner.
+  - Kimlik karşılaştırması `dev + file_id` ile yapılır, `/var` ile `/private/var` aynı sayılır. Sembolik bağlantı bağlantı olarak taşınır.
+- `TrashReport.root` isteğe bağlıdır (`NodeEntry | null`). Taşıma sırasında tarama değiştiyse `null` döner ve ağaca dokunulmaz.
+- `gone` dönen düğüm de ağaçtan koparılır.
+- Taşıyıcı fonksiyon tarama kökünü de alır, `is_protected` için.
+- **Diyalog animasyonsuz.** Planda 150 ms vardı; ama diyalog çoğunlukla kısayolla açılıyor, klavye eylemleri canlandırılmıyor.
+- **Kısayol** bölümde `onKeyDownCapture` ile yakalanır, böylece görünümlerin Backspace (üst klasör) işleyicisi ⌘⌫'yu görmez. Diyalog açıkken eylem kısayolları çalışmaz.
+
+Doğrulama:
+- `fmt`, `clippy -D warnings`, `check`, `test` (app 36, platform 19 + 1 ignored) ve `build --release` temiz.
+- `pnpm typecheck`, `lint` ve `build` temiz.
+- Tarayıcı mock'unda denendi:
+  - ⌘⌫ ile açılış, ilk odak Vazgeç'te;
+  - Esc ile kapanış, odak ızgaraya dönüyor;
+  - onay sırasında "Taşınıyor…";
+  - durum satırı ve boyutların yenilenmesi (Movies 18,0 → 4,6 GB);
+  - `failed` uyarı satırı; bu durumda ağaç değişmiyor;
+  - 375 koyu ve 768 açık.
+- Paketlenmiş `Cleany.app` (release) ile gerçek deneme, 2026-11-16, `~/cleany-trash-test` üzerinde:
+  - ⌘⌫ diyaloğu açıyor, ilk odak Cancel'da; Esc kapatıyor.
+  - Dosya (`deneme.txt`) ve klasör (`klasor`, "Folder · 4.1 KB · 1 file") çöpe gitti; liste, toplam ve durum satırı yenilendi ("Moved … · 4.1 KB freed").
+  - Gezilen klasörün kendisi çöpe gidince ataya (`tansuasici`) dönüldü.
+  - Üçü de Finder Çöp'ünde, `~/cleany-trash-test` diskte yok.
+  - Not: arka plan otomasyonu `aria-haspopup="dialog"` butonuna basamıyor, enjekte tuşlar da web görünümüne ulaşmıyor; deneme ön planda yapıldı.
+- **Kalan:** yok (commit/PR bekliyor).
+
+## Up Next
+
+---
+
+## Done
+
+### M4 — Göster / aç / yolu kopyala (Notion #29) ✅ 2026-11-15 (#23 merged)
 
 **Hedef**: Browse'un üç görünümünde (Tablo, Harita, Halka) seçili öğe için üç eylem: dosya yöneticisinde göster, varsayılan uygulamayla aç, tam yolu panoya kopyala. Bu eylemler düğmelerle ve klavyeyle yapılabilmeli. macOS, Windows ve Linux'ta çalışmalı. Notion kartı boş; kabul ölçütü bu satır.
 
 **Bağlam**: docs/PLAN.md:44 (Aksiyonlar), :110 (`reveal(node)`, `open(node)`), :72 (`cleany-platform` = "çöp/reveal"). M4'ün ilk kartı; #33 (sepet) ve #30 (çöp) aynı "seçili öğe" bağlantısını kullanacak. Tek PR, dal `feat/m4-reveal-open-copy`.
 
 #### Durum (2026-11-15)
-Plan onaylandı; açık sorular: 1 `R`/`O`/`⌘C`, 2 evet, 3 `std::process::Command`, 4 bağlam menüsü yok. Kod tamam, commit yok.
+Plan onaylandı; açık sorular: 1 `R`/`O`/`⌘C`, 2 evet, 3 `std::process::Command`, 4 bağlam menüsü yok. İki commit (simgeler, özellik), #23 ile merged.
 - Plandan sapmalar: Rust tarafı `ActionError` ve komut gövdeleri `src-tauri/src/actions.rs`'e alındı (`lib.rs` yalnız kaydeder). Kancalar oxlint `only-export-components` nedeniyle `ui/src/screens/useBrowseActions.ts`'e ayrıldı. "Kopyalandı" için 150 ms solma eklenmedi (geri bildirim bir tuşa yanıt; tuş eylemleri canlandırılmaz).
 - Doğrulama: fmt/clippy/test/release temiz. Tarayıcı mock'uyla üç görünümde ok tuşuyla seçim → R/O doğru düğüm id'sini çağırıyor, ⌘C yolu kopyalıyor, "artık yok" uyarısı çıkıyor; 375/768/1280, açık/koyu.
 - Ayrı değişiklik (ayrı commit): macOS/Windows uygun simgeler (`assets/icon-macos*.svg`, `src-tauri/icons/`).
@@ -85,12 +236,6 @@ Plan onaylandı; açık sorular: 1 `R`/`O`/`⌘C`, 2 evet, 3 `std::process::Comm
 - **Linux'ta dosya yöneticisi çeşitliliği:** `FileManager1` olmayan masaüstünde öğe seçilemez, yalnız klasör açılır. Kabul edilir, elle Linux denemesi #27 ile birlikte yapılır.
 - **Windows'ta `explorer /select` tırnaklama hatası:** `raw_arg` ve testle kapatılır. Windows'ta elle denenemiyor; CI derlemesi var.
 - **WebKit `clipboard.writeText` kullanıcı hareketi ister:** `get_path` yanıtı beklenirken hareket bağlamı düşebilir. Önlem: seçim değişince yol önceden alınır, düğmede doğrudan yazılır. Olmazsa `tauri-plugin-clipboard-manager` gerekir (onay).
-
-## Up Next
-
----
-
-## Done
 
 ### M3 — Görselleştirme: sunburst (Notion #25) ✅ 2026-11-15 (#22 merged)
 
@@ -477,4 +622,5 @@ _2026-11-14: Plan, bağımlılıklar ve Windows **A seçeneği** onaylandı._
 
 Parked scope — deferred work, revisit when prioritized. (CLAUDE.md → Scope Discipline routes out-of-scope items here.)
 
+- **Macintosh HD toplamı diski aşıyor** (2026-11-16, #30 denemesi sırasında): tarama 1,6 TB gösterdi (System 833 GB, Users 626 GB), disk ise 953 GB dolu; ilerleme çubuğu da "yaklaşık 953 GB" tahminini geçti. `cross_mounts: false` ve "20 diğer birim dışarıda" olmasına rağmen Data birimi `/System/Volumes/Data` ve firmlink'ler üzerinden iki kez sayılıyor olabilir. Ayrı hata; #30 kapsamı dışında.
 - **Döküm "Aç →" dokunmatikte görünmüyor** (#28 interface-check, Minor): `ui/src/screens/Summary.tsx:309` yalnızca hover/odakta görünür; Tailwind v4 `group-hover` `(hover: hover)` ile kapılı olduğundan dokunmatik ekranda tıklanabilir ama görünmez. Masaüstü uygulamasında pratik etkisi yok; dokunmatik/Linux tablet desteği gündeme gelirse `@media (hover: none)` altında sürekli göster.
