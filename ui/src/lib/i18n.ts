@@ -131,7 +131,7 @@ const tr = {
   'trash.done': (p: { name: string; size: string }) => `“${p.name}” çöpe taşındı. ${p.size} alan boşaldı.`,
   'trash.gone': (p: { name: string }) => `“${p.name}” bulunamadı; taramadan sonra silinmiş veya taşınmış olabilir. Listeden kaldırıldı.`,
   'trash.protected': (p: { name: string }) =>
-    `“${p.name}” korunduğu için taşınmadı. Diskler, ana klasör ve üstündeki klasörler, bağlama noktaları ve iCloud/OneDrive yer tutucusu içeren öğeler taşınamaz.`,
+    `“${p.name}” korunduğu için taşınmadı. Diskler, sistem klasörleri, ana klasör ve üstündeki klasörler, bağlama noktaları ve iCloud/OneDrive yer tutucusu içeren öğeler taşınamaz.`,
   'trash.failed': (p: { name: string; reason: string }) => `“${p.name}” çöpe taşınamadı: ${p.reason}`,
   'trash.error': 'Öğe çöpe taşınamadı.',
 
@@ -274,7 +274,7 @@ const en: Dict = {
   'trash.done': (p) => `Moved “${p.name}” to the trash. ${p.size} freed.`,
   'trash.gone': (p) => `“${p.name}” could not be found; it may have been deleted or moved since the scan. It was removed from the list.`,
   'trash.protected': (p) =>
-    `“${p.name}” is protected and was not moved. Disks, the home folder and the folders above it, mount points, and items holding an iCloud/OneDrive placeholder cannot be moved.`,
+    `“${p.name}” is protected and was not moved. Disks, system folders, the home folder and the folders above it, mount points, and items holding an iCloud/OneDrive placeholder cannot be moved.`,
   'trash.failed': (p) => `Could not move “${p.name}” to the trash: ${p.reason}`,
   'trash.error': 'Could not move the item to the trash.',
 

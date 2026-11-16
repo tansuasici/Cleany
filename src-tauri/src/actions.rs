@@ -9,9 +9,10 @@ use std::path::Path;
 
 use cleany_core::NodeKind;
 use cleany_platform::shell::{self, ShellError};
-use cleany_platform::trash::{self as os_trash, TrashError};
+use cleany_platform::trash::{self as os_trash, Protection, TrashError};
 use serde::Serialize;
 
+use crate::deletion_log;
 use crate::session::{ScanId, SessionError, Sessions, TrashOutcome, TrashReport};
 
 /// Why a show / open / copy-path request failed.
@@ -95,19 +96,41 @@ pub fn path_text(sessions: &Sessions, scan: ScanId, node: u32) -> Result<String,
     Ok(path.to_string_lossy().into_owned())
 }
 
-/// Moves `nodes` to the OS trash and takes them out of the scan tree.
-/// Per-item results are in the report; only request-level problems are errors.
-pub fn trash(sessions: &Sessions, scan: ScanId, nodes: &[u32]) -> Result<TrashReport, ActionError> {
-    Ok(sessions.trash(scan, nodes, move_one)?)
+/// Moves `nodes` to the OS trash and takes them out of the scan tree, then
+/// appends every attempt to the deletion log in `log_dir`. Per-item results
+/// are in the report; only request-level problems are errors. A log that
+/// cannot be written is reported on stderr and does not fail the request,
+/// since the items have already moved.
+pub fn trash(
+    sessions: &Sessions,
+    scan: ScanId,
+    nodes: &[u32],
+    log_dir: Option<&Path>,
+) -> Result<TrashReport, ActionError> {
+    let protection = Protection::current();
+    let (report, deletions) = sessions.trash(scan, nodes, |path, kind, root| {
+        move_one(&protection, path, kind, root)
+    })?;
+    if let Some(dir) = log_dir
+        && let Err(e) = deletion_log::append_trash(dir, &deletions)
+    {
+        eprintln!("cleany: deletion log: {e}");
+    }
+    Ok(report)
 }
 
 /// Trashes one item after the checks the tree cannot make: the protected
 /// paths on disk, and that the item still is what the scan saw.
-fn move_one(path: &Path, kind: NodeKind, scan_root: &Path) -> TrashOutcome {
+fn move_one(
+    protection: &Protection,
+    path: &Path,
+    kind: NodeKind,
+    scan_root: &Path,
+) -> TrashOutcome {
     let Ok(meta) = std::fs::symlink_metadata(path) else {
         return TrashOutcome::Gone;
     };
-    if os_trash::is_protected(path, scan_root) {
+    if protection.covers(path, scan_root) {
         return TrashOutcome::Protected;
     }
     if !same_kind(meta.file_type(), kind) {
@@ -140,6 +163,7 @@ mod tests {
     use crate::session::{SessionError, TrashOutcome};
     use cleany_core::NodeKind;
     use cleany_platform::shell::ShellError;
+    use cleany_platform::trash::Protection;
     use std::fs;
 
     #[test]
@@ -160,6 +184,9 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("cleany-move-one-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(dir.join("sub")).unwrap();
+        let p = Protection::current();
+        let move_one =
+            |path: &std::path::Path, kind, root: &std::path::Path| move_one(&p, path, kind, root);
         // Missing on disk.
         assert_eq!(
             move_one(&dir.join("nope"), NodeKind::File, &dir),
