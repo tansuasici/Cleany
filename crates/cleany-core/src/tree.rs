@@ -75,6 +75,10 @@ impl NodeFlags {
     /// Cloud placeholder whose data is not stored locally. A placeholder
     /// directory is recorded but not descended into.
     pub const PLACEHOLDER: Self = Self(1 << 1);
+    /// Removed from the tree by [`Tree::detach`] (e.g. moved to the trash).
+    /// The node keeps its slot so ids stay stable, but it is no longer
+    /// linked to its parent and [`Tree::node_id`] refuses it.
+    pub const DETACHED: Self = Self(1 << 2);
 
     /// Whether every flag in `other` is set.
     #[must_use]
@@ -314,6 +318,15 @@ const fn new_node(parent: u32, name_off: u32, name_len: u16, info: EntryInfo) ->
     }
 }
 
+/// What [`Tree::detach`] took off its ancestors' totals.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Removed {
+    /// Aggregated size of the detached subtree.
+    pub size: Size,
+    /// Non-directory entries in the detached subtree.
+    pub files: u32,
+}
+
 /// A finished, aggregated scan tree.
 #[derive(Debug)]
 pub struct Tree {
@@ -348,10 +361,72 @@ impl Tree {
     /// The id of the node at arena position `index`, or `None` if out of
     /// range. Inverse of [`NodeId::index`], so ids can cross a process
     /// boundary (e.g. IPC) as plain integers.
+    /// Nodes removed by [`Tree::detach`], and nodes below them, are refused.
     #[must_use]
     pub fn node_id(&self, index: u32) -> Option<NodeId> {
         let id = NodeId(index);
-        self.node(id).map(|_| id)
+        self.is_live(id).then_some(id)
+    }
+
+    /// Whether `id` is in this tree and neither it nor an ancestor was detached.
+    fn is_live(&self, id: NodeId) -> bool {
+        let mut cur = Some(id);
+        while let Some(c) = cur {
+            match self.node(c) {
+                Some(n) if !n.flags.contains(NodeFlags::DETACHED) => cur = n.parent(),
+                _ => return false,
+            }
+        }
+        true
+    }
+
+    /// Unlinks `id` from its parent and takes its size and file count off
+    /// every ancestor, as if the entry had never been scanned. The slot
+    /// stays in the arena (marked [`NodeFlags::DETACHED`]) so other ids keep
+    /// their meaning. Sizes of hard links shared with the rest of the tree
+    /// are taken as scanned, so the new totals are approximate for them.
+    ///
+    /// Returns `None` for the root, an id not in this tree, or a node that
+    /// is already detached (itself or through an ancestor).
+    pub fn detach(&mut self, id: NodeId) -> Option<Removed> {
+        if id == self.root() || !self.is_live(id) {
+            return None;
+        }
+        let nodes = &mut self.arena.nodes;
+        let (parent, next, removed) = {
+            let n = nodes.get(id.index())?;
+            let removed = Removed {
+                size: n.size,
+                files: n.file_count,
+            };
+            (n.parent, n.next_sibling, removed)
+        };
+        // Unlink from the parent's sibling chain.
+        let first = nodes.get(parent as usize)?.first_child;
+        if first == id.0 {
+            nodes.get_mut(parent as usize)?.first_child = next;
+        } else {
+            let mut prev = first;
+            while prev != NONE {
+                let p = nodes.get_mut(prev as usize)?;
+                if p.next_sibling == id.0 {
+                    p.next_sibling = next;
+                    break;
+                }
+                prev = p.next_sibling;
+            }
+        }
+        let n = nodes.get_mut(id.index())?;
+        n.next_sibling = NONE;
+        n.flags = n.flags.union(NodeFlags::DETACHED);
+        // Take the subtree's totals off every ancestor.
+        let mut cur = parent;
+        while let Some(a) = nodes.get_mut(cur as usize) {
+            a.size = a.size.saturating_sub(removed.size);
+            a.file_count = a.file_count.saturating_sub(removed.files);
+            cur = a.parent;
+        }
+        Some(removed)
     }
 
     /// Name of the entry (the full scanned path for the root).
@@ -396,7 +471,7 @@ impl Iterator for Children<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::{EntryInfo, Node, NodeFlags, NodeKind, TreeBuilder, TreeError};
+    use super::{EntryInfo, Node, NodeFlags, NodeKind, Removed, Tree, TreeBuilder, TreeError};
     use crate::Size;
     use std::ffi::OsStr;
     use std::path::PathBuf;
@@ -539,5 +614,99 @@ mod tests {
         let t = b.finish();
         assert_eq!(t.node_id(1), None);
         assert_eq!(t.node_id(u32::MAX), None);
+    }
+
+    /// `/r` with `sub/{a 10, b 20}`, `c 5` (logical bytes; 4096 allocated each).
+    fn detach_tree() -> (Tree, [super::NodeId; 4]) {
+        let mut b = TreeBuilder::new(OsStr::new("/r"), info(NodeKind::Dir, 0, 4096)).unwrap();
+        let root = b.root();
+        let sub = b
+            .add_child(root, OsStr::new("sub"), info(NodeKind::Dir, 0, 4096))
+            .unwrap();
+        let a = b
+            .add_child(sub, OsStr::new("a"), info(NodeKind::File, 10, 4096))
+            .unwrap();
+        let bb = b
+            .add_child(sub, OsStr::new("b"), info(NodeKind::File, 20, 4096))
+            .unwrap();
+        let c = b
+            .add_child(root, OsStr::new("c"), info(NodeKind::File, 5, 4096))
+            .unwrap();
+        (b.finish(), [sub, a, bb, c])
+    }
+
+    #[test]
+    fn detach_takes_totals_off_ancestors() {
+        let (mut t, [sub, a, _, c]) = detach_tree();
+        assert_eq!(
+            t.detach(a),
+            Some(Removed {
+                size: Size {
+                    logical: 10,
+                    allocated: 4096
+                },
+                files: 1
+            })
+        );
+        let s = t.node(sub).unwrap();
+        assert_eq!(s.size().logical, 20);
+        assert_eq!(s.file_count(), 1);
+        let r = t.node(t.root()).unwrap();
+        assert_eq!(
+            r.size(),
+            Size {
+                logical: 25,
+                allocated: 4 * 4096
+            }
+        );
+        assert_eq!(r.file_count(), 2);
+        assert!(t.node_id(u32::try_from(c.index()).unwrap()).is_some());
+    }
+
+    #[test]
+    fn detach_unlinks_from_children() {
+        let (mut t, [sub, a, bb, c]) = detach_tree();
+        // `bb` is the head of `sub`'s chain (children are prepended), `a` the tail.
+        t.detach(bb).unwrap();
+        assert_eq!(t.children(sub).collect::<Vec<_>>(), [a]);
+        t.detach(a).unwrap();
+        assert_eq!(t.children(sub).count(), 0);
+        t.detach(sub).unwrap();
+        assert_eq!(t.children(t.root()).collect::<Vec<_>>(), [c]);
+        let r = t.node(t.root()).unwrap();
+        assert_eq!(r.size().logical, 5);
+        assert_eq!(r.file_count(), 1);
+    }
+
+    #[test]
+    fn detach_middle_sibling_keeps_the_rest() {
+        let mut b = TreeBuilder::new(OsStr::new("/r"), info(NodeKind::Dir, 0, 0)).unwrap();
+        let root = b.root();
+        let ids: Vec<_> = ["x", "y", "z"]
+            .iter()
+            .map(|n| {
+                b.add_child(root, OsStr::new(n), info(NodeKind::File, 1, 1))
+                    .unwrap()
+            })
+            .collect();
+        let mut t = b.finish();
+        t.detach(ids[1]).unwrap();
+        let mut left: Vec<_> = t.children(root).collect();
+        left.sort();
+        assert_eq!(left, [ids[0], ids[2]]);
+    }
+
+    #[test]
+    fn detach_twice_root_and_descendants_are_refused() {
+        let (mut t, [sub, a, _, _]) = detach_tree();
+        assert_eq!(t.detach(t.root()), None);
+        t.detach(sub).unwrap();
+        assert_eq!(t.detach(sub), None);
+        assert_eq!(t.detach(a), None, "a node under a detached one");
+        for id in [sub, a] {
+            assert_eq!(t.node_id(u32::try_from(id.index()).unwrap()), None);
+        }
+        assert!(t.node(sub).unwrap().flags().contains(NodeFlags::DETACHED));
+        assert_eq!(t.node(t.root()).unwrap().file_count(), 1);
     }
 }

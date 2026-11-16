@@ -16,7 +16,7 @@ pub use scan::{
 };
 pub use sunburst::{SunburstArc, SunburstOptions, sunburst};
 pub use tree::{
-    Children, EntryInfo, Node, NodeFlags, NodeId, NodeKind, Tree, TreeBuilder, TreeError,
+    Children, EntryInfo, Node, NodeFlags, NodeId, NodeKind, Removed, Tree, TreeBuilder, TreeError,
 };
 pub use treemap::{Cell, CellTarget, Rect, TreemapOptions, treemap};
 
@@ -38,6 +38,15 @@ impl Size {
         Self {
             logical: self.logical.saturating_add(other.logical),
             allocated: self.allocated.saturating_add(other.allocated),
+        }
+    }
+
+    /// Subtracts another size, stopping at zero instead of underflowing.
+    #[must_use]
+    pub const fn saturating_sub(self, other: Self) -> Self {
+        Self {
+            logical: self.logical.saturating_sub(other.logical),
+            allocated: self.allocated.saturating_sub(other.allocated),
         }
     }
 }
@@ -76,5 +85,24 @@ mod tests {
             allocated: 1,
         };
         assert_eq!(a.saturating_add(b), a);
+    }
+
+    #[test]
+    fn saturating_sub_stops_at_zero() {
+        let a = Size {
+            logical: 10,
+            allocated: 4096,
+        };
+        let b = Size {
+            logical: 4,
+            allocated: 8192,
+        };
+        assert_eq!(
+            a.saturating_sub(b),
+            Size {
+                logical: 6,
+                allocated: 0
+            }
+        );
     }
 }

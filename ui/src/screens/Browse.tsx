@@ -6,11 +6,15 @@ import {
   type ScanId,
   type SortKey,
   type SortOrder,
+  type TrashReport,
+  getAncestors,
   getChildren,
+  trashNodes,
 } from '../lib/ipc'
 import { type BrowseScreen, useStore } from '../store'
-import { ActionBar } from './BrowseActions'
-import { type ActionTarget, actionKeys, useBrowseActions } from './useBrowseActions'
+import { ActionBar, type TrashNote, TrashDialog } from './BrowseActions'
+import { useOs } from '../useOs'
+import { type ActionTarget, actionKeys, trashKey, useBrowseActions } from './useBrowseActions'
 import { Sunburst } from './Sunburst'
 import { Treemap } from './Treemap'
 import { useT } from '../useT'
@@ -58,6 +62,7 @@ export function BrowseView({ screen }: { screen: BrowseScreen }) {
   const { t, locale } = useT()
   const browse = useStore((s) => s.browse)
   const showSummary = useStore((s) => s.showSummary)
+  const trashed = useStore((s) => s.trashed)
   const { done, node } = screen
   const scan = done.summary.scan
   const [sort, setSort] = useState<Sort>({ key: 'allocated', order: 'desc' })
@@ -80,14 +85,92 @@ export function BrowseView({ screen }: { screen: BrowseScreen }) {
   const [picked, setPicked] = useState<ActionTarget | null>(null)
   const target = picked ?? { id: node.id, name }
   const actions = useBrowseActions(scan, target)
+  const os = useOs()
+
+  // Moving to the trash: what is being asked about, and what the last move did.
+  const [asking, setAsking] = useState<ActionTarget | null>(null)
+  const [working, setWorking] = useState(false)
+  const [note, setNote] = useState<TrashNote | null>(null)
+  // Bumped after a move, so the view on show reads the tree again.
+  const [rev, setRev] = useState(0)
+  const canTrash = target.id !== done.summary.root.id
+  const askTrash = () => {
+    if (canTrash && !asking) setAsking(target)
+  }
+
+  const describe = (report: TrashReport): TrashNote => {
+    const alerts: string[] = []
+    let status = ''
+    for (const item of report.items) {
+      const name = item.name
+      switch (item.outcome.kind) {
+        case 'trashed':
+          status = t('trash.done', { name, size: formatBytes(report.freed.allocated, locale) })
+          break
+        case 'gone':
+          alerts.push(t('trash.gone', { name }))
+          break
+        case 'protected':
+          alerts.push(t('trash.protected', { name }))
+          break
+        case 'failed':
+          alerts.push(t('trash.failed', { name, reason: item.outcome.message }))
+          break
+      }
+    }
+    return { status, alert: alerts.join(' ') }
+  }
+
+  /** Back to the folder on show, or the nearest one above it that is still in the tree. */
+  const settle = async () => {
+    const chain = [node, ...(trail ?? []).slice(0, -1).reverse()]
+    for (const folder of chain) {
+      try {
+        const list = await getAncestors(scan, folder.id)
+        const fresh = list[list.length - 1]
+        if (!fresh) continue
+        if (fresh.id !== node.id) setCameFrom(null)
+        browse(fresh)
+        return
+      } catch {
+        // Taken out of the tree; try the folder above.
+      }
+    }
+    showSummary()
+  }
+
+  const confirmTrash = async () => {
+    if (!asking) return
+    setWorking(true)
+    let report: TrashReport
+    try {
+      report = await trashNodes(scan, [asking.id])
+    } catch {
+      setNote({ status: '', alert: t('trash.error') })
+      return
+    } finally {
+      // Closed before the view is rebuilt, so focus can go back to it.
+      setWorking(false)
+      setAsking(null)
+    }
+    setNote(describe(report))
+    if (report.root) trashed(scan, report.root)
+    if (report.items.some((i) => i.outcome.kind === 'trashed' || i.outcome.kind === 'gone')) {
+      setPicked(null)
+      await settle()
+      setRev((r) => r + 1)
+    }
+  }
 
   const open = (target: NodeEntry) => {
     setCameFrom(null)
+    setNote(null)
     browse(target)
   }
   const up = () => {
     if (!parent) return
     setCameFrom(node.id)
+    setNote(null)
     browse(parent)
   }
   const onSort = (key: SortKey) =>
@@ -97,6 +180,7 @@ export function BrowseView({ screen }: { screen: BrowseScreen }) {
     <section
       aria-labelledby="browse-title"
       onKeyDown={actionKeys(actions)}
+      onKeyDownCapture={trashKey(os === 'macos', askTrash)}
       className="mx-auto flex h-full w-full max-w-240 flex-col px-8 pt-8 pb-4">
       <h1 id="browse-title" className="text-title font-medium">
         <LeaderRow name={name} title={name} value={formatBytes(node.allocated, locale)} />
@@ -120,6 +204,7 @@ export function BrowseView({ screen }: { screen: BrowseScreen }) {
 
       {view === 'table' ? (
         <Table
+          key={rev}
           scan={scan}
           node={node}
           label={t('browse.tableLabel', { name })}
@@ -133,6 +218,7 @@ export function BrowseView({ screen }: { screen: BrowseScreen }) {
         />
       ) : view === 'map' ? (
         <Treemap
+          key={rev}
           scan={scan}
           node={node}
           label={t('browse.mapLabel', { name })}
@@ -144,6 +230,7 @@ export function BrowseView({ screen }: { screen: BrowseScreen }) {
         />
       ) : (
         <Sunburst
+          key={rev}
           scan={scan}
           node={node}
           name={name}
@@ -158,9 +245,26 @@ export function BrowseView({ screen }: { screen: BrowseScreen }) {
       )}
 
       <div className="mt-3 flex flex-col gap-2">
-        <ActionBar target={target} actions={actions} />
+        <ActionBar
+          target={target}
+          actions={actions}
+          os={os}
+          canTrash={canTrash}
+          onTrash={askTrash}
+          note={note}
+        />
         <p className="text-meta text-ink-3">{t(HINT_TEXT[view])}</p>
       </div>
+
+      {asking && (
+        <TrashDialog
+          scan={scan}
+          target={asking}
+          working={working}
+          onCancel={() => setAsking(null)}
+          onConfirm={() => void confirmTrash()}
+        />
+      )}
     </section>
   )
 }

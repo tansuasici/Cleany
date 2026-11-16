@@ -85,6 +85,8 @@ export function actionKeys(actions: Actions) {
     if (e.defaultPrevented || e.altKey || e.shiftKey) return
     const el = e.target as HTMLElement
     if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable) return
+    // Keys in a dialog belong to it.
+    if (el.closest('dialog')) return
     const mod = e.metaKey || e.ctrlKey
     const key = e.key.toLowerCase()
     if (!mod && (key === 'r' || key === 'o')) {
@@ -98,5 +100,25 @@ export function actionKeys(actions: Actions) {
       return
     }
     e.preventDefault()
+  }
+}
+
+/**
+ * ⌘⌫ on macOS, Delete elsewhere: asks to move the target to the trash. Bound
+ * in the capture phase so the views never read ⌘⌫ as Backspace (up a folder).
+ */
+export function trashKey(mac: boolean, ask: () => void) {
+  return (e: KeyboardEvent<HTMLElement>) => {
+    const el = e.target as HTMLElement
+    if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable) return
+    if (el.closest('dialog')) return
+    if (e.altKey || e.shiftKey) return
+    const hit = mac
+      ? e.key === 'Backspace' && e.metaKey && !e.ctrlKey
+      : e.key === 'Delete' && !e.metaKey && !e.ctrlKey
+    if (!hit) return
+    e.preventDefault()
+    e.stopPropagation()
+    if (!e.repeat) ask()
   }
 }
