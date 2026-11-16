@@ -1,15 +1,17 @@
 //! Platform layer: OS detection, raw entry metadata, volume listing, handing
-//! paths to the file manager, and moving items to the trash; fast scan paths
-//! come later (M7+).
+//! paths to the file manager, moving items to the trash, and live change
+//! notifications; fast scan paths come later (M7+).
 
 pub mod meta;
 mod protected;
 pub mod shell;
 pub mod trash;
 pub mod volumes;
+pub mod watch;
 
 pub use meta::{EntryKind, EntryMeta, read_entry_meta, read_meta};
 pub use volumes::{Volume, list_volumes};
+pub use watch::{ChangeKind, FsChange, WatchError, Watcher, watch};
 
 use serde::Serialize;
 
