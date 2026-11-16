@@ -6,6 +6,7 @@ import {
   type ScanId,
   type ScanSummary,
   type VolumeEntry,
+  attachScan,
   cancelScan,
   getAncestors,
   getChildren,
@@ -114,6 +115,12 @@ interface State {
   dismissAccess: () => void
   loadVolumes: () => Promise<void>
   scan: (target: Target) => Promise<void>
+  /**
+   * Reopens the backend's finished scan after the webview reloaded (a dev
+   * reload, or the page being rebuilt), instead of scanning again. Does
+   * nothing if the user has already moved on or no scan finished.
+   */
+  reattach: () => Promise<void>
   cancel: () => Promise<void>
   showVolumes: () => void
   openLast: () => void
@@ -163,6 +170,31 @@ function initialAccessDismissed(): boolean {
   } catch {
     return false
   }
+}
+
+const TARGET_KEY = 'cleany.target'
+
+/** Remembers what a finished scan was of; the backend knows only its path. */
+function saveTarget(scan: ScanId, target: Target) {
+  try {
+    sessionStorage.setItem(TARGET_KEY, JSON.stringify({ scan, target }))
+  } catch {
+    // The fallback in `savedTarget` names it from the path.
+  }
+}
+
+/** The target saved for `scan`, or one named after the root's path. */
+function savedTarget(summary: ScanSummary): Target {
+  try {
+    const raw = sessionStorage.getItem(TARGET_KEY)
+    const saved = raw ? (JSON.parse(raw) as { scan?: unknown; target?: Target }) : null
+    if (saved?.scan === summary.scan && typeof saved.target?.path === 'string') return saved.target
+  } catch {
+    // Unreadable storage or a malformed entry; fall back below.
+  }
+  // The root's name is the scanned path itself.
+  const path = summary.root.name
+  return { path, name: path.split('/').filter(Boolean).at(-1) ?? path }
 }
 
 const message = (error: unknown) =>
@@ -242,6 +274,7 @@ export const useStore = create<State>()((set, get) => ({
           }
           case 'done': {
             const done: DoneScreen = { kind: 'done', target, summary: event.summary, top: { status: 'loading' } }
+            saveTarget(event.summary.scan, target)
             set({ screen: done, last: done })
             void loadTop(target, event.summary)
             return
@@ -267,6 +300,23 @@ export const useStore = create<State>()((set, get) => ({
     } catch (error) {
       if (current()) set({ screen: { kind: 'failed', target, message: message(error) } })
     }
+  },
+
+  reattach: async () => {
+    const gen = generation
+    let summary: ScanSummary | null
+    try {
+      summary = await attachScan()
+    } catch {
+      // Nothing to reopen; the volumes screen stays.
+      return
+    }
+    // A scan started, or the user left the volumes, while the reply was on its way.
+    if (!summary || gen !== generation || get().screen.kind !== 'volumes') return
+    const target = savedTarget(summary)
+    const done: DoneScreen = { kind: 'done', target, summary, top: { status: 'loading' } }
+    set({ screen: done, last: done })
+    void loadTop(target, summary)
   },
 
   cancel: async () => {
