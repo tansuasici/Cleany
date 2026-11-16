@@ -71,6 +71,201 @@ Give the task you are actively working on an `h3` heading under **In Progress** 
 
 ## Up Next
 
+### Canlı tarama: biten taramayı yeniden taramadan güncel tut (FSEvents) — PLAN, onay bekliyor
+
+**Durum (2026-11-16)**: Yalnız plan. Kod yok. Yeni bağımlılık, IPC sözleşmesi ve yeni `pub` API için onay gerekiyor (aşağıda "Onay gereken değişiklikler").
+
+**Hedef**: Tarama bittikten sonra kökün altında uygulama dışında yapılan bir değişiklik (dosya ekleme, silme, büyüme) "Tara"ya basmadan birkaç saniye içinde ağaçta, tabloda, haritada ve sepette görünür. Arayüz yeniden yüklenince (Vite HMR) tarama kaybolmaz.
+
+**Bağlam**:
+- Bugün tarama bellekte bir anlık görüntü (`src-tauri/src/session.rs` → `State::Done { Finished { tree } }`).
+- Uygulama içinden çöpe taşıma ağacı `Tree::detach` ile günceller. Dışarıdaki değişiklik ise ancak yeniden taramayla görünür.
+- `on_event` kanalı tarama iş parçacığına taşınır ve `done` olayından sonra düşer. Yani bugün `done` sonrası UI'a olay taşıyacak bir yol yok.
+- Kullanıcı şunu sordu: "Neden her seferinde yeniden Tara'ya basmam gerekiyor?"
+- `docs/PLAN.md:56` canlı izlemeyi v2'ye koyuyor. Bu plan onu öne çekiyor; onay bunu da kapsıyor.
+
+#### "Dev yeniden başlatma" iki ayrı durum
+1. **Yalnız webview yenilenir** (Vite HMR, ⌘R): Rust süreci ve ağaç yaşıyor. Ama `store.ts` sıfırlanıp "Birimler" ekranına dönüyor.
+   - Çözüm ucuz: yeni `attach_scan` komutu (aşağıda) güncel `Done` taramanın özetini ve kimliğini döner. UI açılışta bunu çağırıp kaldığı taramaya bağlanır.
+   - Disk önbelleği gerekmez.
+2. **Rust yeniden derlenir ve süreç yeniden başlar** (`tauri dev` içinde Rust değişikliği; üretimde uygulamayı kapatıp açmak): bellekteki her şey gider.
+   - Bunu yalnız disk önbelleği çözer. Kararı aşağıda.
+
+#### Tasarım kararları
+- **İzleyici nerede: `cleany-platform`; yaşam döngüsü `src-tauri`'de.**
+  - `crates/cleany-platform/src/watch.rs`: OS izleyicisinin ince sarmalayıcısı. `notify` olaylarını platformdan bağımsız `FsChange { path, kind: Entry | Subtree }` değerlerine çevirir.
+    - `Subtree`, FSEvents'in `MustScanSubDirs` / olay kaybı bayraklarından gelir.
+    - Platform crate'i core'a bağlanmaz (ADR-0005).
+  - `crates/cleany-core/src/refresh.rs`: saf mantık.
+    - Değişen yolları birleştirip bir yenileme planına çevirir.
+    - Bir klasörü yeniden listeleyip ağaca yamar.
+    - Dosya sistemine dokunmadan birim testi yazılabilir.
+  - `src-tauri/src/session.rs`: izleyiciyi `State::Done` içinde tutar, birleştirme iş parçacığını çalıştırır, `changed` olayını yollar.
+    - Taramanın yerini yeni tarama alınca izleyici düşer ve durur.
+  - `unsafe_code = "deny"` olduğundan FSEvents mutlaka bir crate üzerinden gelir. Kendi FFI'ımızı yazmayız.
+- **Platformlar.**
+  - İlk sürüm yalnız macOS (FSEvents): `#[cfg(target_os = "macos")]`.
+  - Windows ve Linux'ta `watch` bir no-op döner; davranış bugünkü gibi kalır.
+  - Linux'ta `inotify` her klasöre ayrı izleme ister. Büyük ağaçlarda `max_user_watches` sınırına takılır. Bu yüzden ayrı iş.
+- **İzleme taramayla birlikte başlar.**
+  - Değişiklikler `done` gelene kadar tamponda birikir, sonra uygulanır. Yoksa tarama sürerken yapılan değişiklikler kaybolur.
+  - Tampon bir sınırı aşarsa (ör. 10 000 yol) tek bir "kök yeniden taransın" işaretine düşer.
+- **Birleştirme (coalescing).**
+  - Olaylar sessizlik penceresiyle toplanır: son olaydan 1 sn sonra işlenir, en geç 5 sn'de bir zorla işlenir.
+  - Her yol, ebeveyn klasörüne çevrilir: "bu klasörü yeniden listele".
+  - Kökün dışındaki yollar atılır.
+  - Bir `Subtree` işaretinin altında kalan klasörler atılır.
+  - Aynı ebeveyni paylaşan çok sayıda klasör (ör. > 256) ortak ataya yükseltilir.
+  - Kök için `Subtree` gelirse tam yeniden tarama yapılır ve yeni `ScanId` alınır. UI bunu bugünkü tarama akışıyla gösterir.
+- **Yalnız etkilenen kısım yeniden taranır; düğüm kimlikleri korunur.**
+  - Varsayılan "sığ yenileme"dir. Klasör tek seviye listelenir ve mevcut çocuklarla adına ve türüne göre eşleştirilir.
+    - Eşleşen dosya: boyutu ve `mtime` değeri yerinde güncellenir. Fark ataların toplamına eklenir. Kimlik aynı kalır.
+    - Eşleşen alt klasör: dokunulmaz. Onun kendi değişikliği kendi olayıyla gelir.
+    - Kaybolan girdi: `Tree::detach`.
+    - Yeni dosya: arenanın sonuna eklenir.
+    - Yeni alt klasör: mevcut tarayıcıyla (`scan`) kendi alt ağacı taranır ve aşılanır.
+  - `Subtree` işareti gelirse o klasörün çocukları detach edilir ve alt ağaç baştan taranıp aşılanır.
+  - Böylece UI'ın tuttuğu `u32` kimlikler (açık klasör, `basket.chain`, seçim) normal değişikliklerde geçerli kalır.
+  - Arena "çocuk, ebeveynden büyük indekste" kuralını korur, çünkü yeni düğümler hep sona eklenir.
+- **Yoldan düğüme.**
+  - `Tree` bugün yalnız düğümden yola gidiyor.
+  - Yeni `Tree::lookup(path)` kökten başlayıp bileşen bileşen çocuklar arasında ada göre arar. Maliyeti her bileşende kardeş sayısıyla doğrusaldır.
+  - Sığ yenileme, yenilenen klasör için zaten geçici bir `ad → id` haritası kurar. 100 000 çocuklu bir klasör bir kez taranır.
+- **Tarayıcı kuralları alt ağaçta da geçerli.**
+  - `scan` iki seçenek alır: ilk taramanın kök aygıtı (`root_dev`) ve `cross_mounts`.
+  - Böylece alt ağaç taraması bağlama noktası sınırını orijinal köke göre uygular.
+  - Sembolik bağlar izlenmez. Yer tutucular indirilmez (tarayıcının mevcut mantığı aynen kullanılır).
+- **Hardlink'ler yaklaşık.**
+  - Tekilleştirme bugün tüm tarama için `finish` adımında yapılıyor. Alt ağaç taraması yalnız kendi içinde tekilleştirir.
+  - Ağacın başka yerindeki bir dosyaya hardlink olan yeni dosya tam boyutuyla sayılır. `detach` için de durum bugün aynı; belgelenir.
+- **Kilit disiplini `trash` ile aynı.**
+  - Disk G/Ç (listeleme, alt ağaç taraması) kilit dışında yapılır.
+  - Kilit yeniden alınınca `ScanId` hâlâ güncel ve `Done` mı diye bakılır. Değilse yama atılır.
+  - `sorted` önbelleği temizlenir.
+- **Uygulamanın kendi çöpe taşımaları.**
+  - FSEvents bunları da bildirir. Düğüm zaten detach edilmiş olduğundan yeniden listeleme değişiklik bulmaz.
+  - Yama idempotent olduğu için bunlar no-op olur.
+- **Arena büyümesi sınırlı.**
+  - Detach edilen düğümlerin yerleri boşalmaz.
+  - Ölü düğüm sayısı canlı düğüm sayısını geçerse yama yerine tam yeniden tarama yapılır (yeni `ScanId`).
+  - Sıkıştırma (kimlikleri yeniden numaralamak) bu işte yok.
+- **Yük.**
+  - Sürekli değişen klasörler (`~/Library/Caches`, derleme `target/`, tarayıcı profilleri) sürekli yenileme tetikleyebilir.
+  - Birleştirme penceresi bunu en çok 5 sn'de bir yenilemeye indirir.
+  - Pencere gizliyken izleme duraklatılabilir. Bu bir açık soru.
+
+#### UI'a iletim (yeni IPC)
+- **`ScanEvent::Changed`** (yeni varyant). Alanlar:
+  - `revision: u32`: her yamada artar.
+  - `root: NodeEntry`: güncel kök.
+  - `dirs: u32[]`: içeriği değişen klasörler, en çok 256 tane. Sınır aşılırsa `truncated: true` gelir.
+  - Olay küçük kalır. Ağaç gönderilmez (CLAUDE.project.md: "IPC: send tree slices").
+  - Birleştirme nedeniyle 1 Hz'in çok altında yollanır (sınır ≤ 10 Hz).
+- **Taşıyıcı.** `done` olayından sonra bugün kanal yok. İki seçenek var:
+  - A) `State::Done` ilk taramanın emit kapanışını saklar.
+  - B) Yeni bir `attach_scan(on_event: Channel<ScanEvent>) -> Option<ScanSummary>` komutu güncel `Done` taramaya yeni bir kanal bağlar ve öncekini değiştirir.
+  - **Öneri: B.** Webview yenilenince eski JS kanalı zaten ölüdür; B hem canlı güncellemeyi hem de HMR sonrası yeniden bağlanmayı tek komutla çözer.
+    - Tarama akışı değişmez: UI `done` alınca `attach_scan` çağırır.
+    - Uygulama açılırken de çağırır: `Some` dönerse "Bitti" ekranına geri gelir.
+  - Global `app.emit` kullanılmaz. Kanallar taramaya bağlıdır ve `store.ts` içindeki nesil (generation) kontrolü eski olayları zaten eler.
+  - Yetenek (capability) değişikliği gerekmez.
+- **UI tepkisi** (`store.ts` ve ekranlar):
+  - `last.summary.root` ve döküm (`top`) güncellenir.
+  - Açık görünüm (tablo sayfası, harita veya halka) bir kez yeniden çekilir. Şart: `dirs` boş değil ya da `truncated`.
+  - Açık klasör detach olduysa `unknownNode` döner. UI iz (trail) üzerinde ilk yaşayan atasına çıkar ve durum satırında bunu söyler.
+  - Sepet için mevcut `refreshBasket` çağrılır. Kaybolan öğeler sepetten düşer.
+  - Seçili öğe kaybolduysa seçim kalkar.
+  - Kök için tam yeniden tarama gerekirse UI bugünkü "Taranıyor" akışına girer.
+  - Metinler TR ve EN olarak `i18n.ts` dosyasına eklenir (resmî ton).
+
+#### Disk önbelleği değer mi? — Şimdilik hayır
+- Yalnız 2. durumu (süreç yeniden başlaması) çözer. 1. durum `attach_scan` ile bedavaya çözülüyor.
+- Önbellek kendi başına bayattır. Doğru kullanmak için kapanıştan beri olan değişiklikleri bilmek gerekir.
+  - Bu, FSEvents olay kimliğiyle geriye oynatma (`sinceWhen`) ister.
+  - `notify` bunu sunmuyor gibi görünüyor (açık soru). Bu da ikinci bir bağımlılık (ör. `fsevent-stream`) demek.
+  - Geriye oynatma olmadan önbellek ya yanlış gösterir ya da yine tam tarama ister.
+- Milyonlarca düğümlük bir ağaç diskte onlarca, yüzlerce MB tutar. Sürüm/biçim yönetimi ister.
+- Kullanıcının bütün dosya listesini diske yazmak gizlilik açısından da hassas.
+- **Ne zaman değer**: v1.x "Anlık görüntü ve fark" (`docs/PLAN.md` §2.2) ağacı zaten serileştirecek. Önbellek o işle birlikte ve FSEvents geriye oynatmasıyla ele alınmalı. "Not Now" listesine eklenir.
+
+#### İş bölümü (her biri ayrı PR)
+1. **`attach_scan` + HMR sonrası yeniden bağlanma.** — UYGULANDI (`feat/attach-scan`, onaylandı: "Evet, PR 1").
+   - Bağımlılık yok. Küçük bir IPC değişikliği var.
+   - "Dev'de her seferinde Tara" sıkıntısının yarısını hemen çözer.
+   - Bu PR'da komut kanal almıyor: `attach_scan() -> Option<ScanSummary>`. Kanal parametresi `ScanEvent::Changed` ile birlikte (4. PR) eklenecek.
+   - Sınır: tarama sürerken yapılan yeniden yükleme bağlanmaz; yalnız biten tarama geri açılır.
+2. **Core: ağaç yamaları ve birleştirici.**
+   - `Tree::lookup`, yerinde güncelleme ve ekleme, alt ağaç aşılama, `refresh.rs`, `scan` için `root_dev` seçeneği.
+   - Bağımlılık ve IPC değişikliği yok.
+3. **Platform: `watch.rs` (`notify`, yalnız macOS).** Yeni bağımlılık burada.
+4. **Session + `ScanEvent::Changed` + UI tepkisi.**
+5. **ADR-0006** ("Canlı izleme: FSEvents, sığ yenileme, kimlik koruma, önbellek yok"), PR 2 ile birlikte `tasks/decisions.md` dosyasına.
+
+#### Onay gereken değişiklikler
+- **Yeni bağımlılık:** `cleany-platform` içine `notify`, yalnız macOS hedefinde, varsayılan `macos_fsevent` özelliğiyle.
+  - Lisans: CC0-1.0.
+  - Kendi debouncer crate'i (`notify-debouncer-full`) alınmaz. Birleştirme `refresh.rs` içinde yazılır ve test edilir.
+- **IPC sözleşmesi:**
+  - `ScanEvent::Changed` varyantı.
+  - Yeni `attach_scan` komutu (`src-tauri/src/lib.rs` ve `ui/src/lib/ipc.ts`).
+- **Yeni `pub` API:**
+  - core: `Tree::lookup`, `Tree::refresh_dir` (veya eşdeğeri), `Tree::graft`, `refresh::Coalescer`, `ScanOptions::root_dev`.
+  - platform: `watch::{Watcher, FsChange}`.
+- **Yol haritası:** `docs/PLAN.md` §2.3'teki canlı izlemeyi öne çekmek.
+
+#### Testler (koddan önce; her biri bugünkü ağaçta başarısız)
+- `tree::update_entry_moves_size_delta_to_every_ancestor`: yerinde boyut güncellemesi kökte doğru toplamı verir.
+- `tree::graft_appends_subtree_and_keeps_existing_ids`: aşılama sonrası eski kimlikler aynı düğümü gösterir, toplamlar doğrudur.
+- `tree::lookup_finds_node_by_path_and_refuses_detached`: yoldan düğüme arama yapılır, detach edilmiş düğüm bulunmaz.
+- `refresh::shallow_refresh_updates_files_detaches_gone_and_scans_new_dirs`: `tempdir` ile.
+- `refresh::shallow_refresh_is_idempotent_after_app_trash`: uygulamanın kendi çöpe taşıması no-op olur.
+- `refresh::coalesce_drops_paths_under_a_subtree_rescan`
+- `refresh::coalesce_escalates_many_siblings_to_common_ancestor`
+- `refresh::coalesce_ignores_paths_outside_root`
+- `scan::subtree_scan_respects_original_root_device`
+- `session::changes_patch_done_tree_and_emit_changed`: olay kaynağı enjekte edilir (`trash` testlerindeki `mover` gibi). Gerçek FSEvents gerekmez ve 3 OS CI'da deterministiktir.
+- `session::changes_buffered_during_scan_apply_after_done`
+- `session::changes_for_a_replaced_scan_are_dropped`
+- `session::attach_scan_returns_current_done_summary_and_none_otherwise`
+- `session::dead_nodes_over_live_trigger_full_rescan`
+- Mevcut `scan_event_json_shape` ve `ipc_ts_mentions_every_serialized_key` testleri `changed` örneğiyle genişler.
+- `watch::reports_created_file` (yalnız macOS, `tempdir` ve zaman aşımıyla): CI'da kararsız çıkarsa `#[ignore]` ile elle çalıştırılır.
+
+#### Dosyalar
+- `crates/cleany-core/src/tree.rs`: `lookup`, yerinde güncelleme, ekleme ve aşılama.
+- `crates/cleany-core/src/refresh.rs` (yeni): birleştirici ve sığ yenileme.
+- `crates/cleany-core/src/scan.rs`, `crates/cleany-core/src/lib.rs`: `root_dev` seçeneği ve yeniden dışa aktarımlar.
+- `crates/cleany-platform/src/watch.rs` (yeni), `crates/cleany-platform/src/lib.rs`, `crates/cleany-platform/Cargo.toml`: onay sonrası.
+- `src-tauri/src/session.rs`: `Done` içinde izleyici, tampon, yama, `Changed`, `attach`.
+- `src-tauri/src/lib.rs`: `attach_scan` komutu.
+- `ui/src/lib/ipc.ts`, `ui/src/store.ts`, `ui/src/screens/*`, `ui/src/lib/i18n.ts`: yeniden bağlanma ve `changed` tepkisi.
+- `tasks/decisions.md` (ADR-0006), `CODEBASE_MAP.md` (bir satır), `docs/PLAN.md` (§2.3 notu).
+
+#### Açık sorular
+- **`notify` sürümü.** `cargo info` 9.0.0-rc serisini gösteriyor. Kararlı 8.x mi, 9 rc mi? Öneri: kararlı olan.
+- **Geriye oynatma.** `notify` FSEvents olay kimliğiyle geriye oynatmayı (`sinceWhen`) açıyor mu? Yalnız ileride yapılacak önbellek için önemli.
+- **`/` taramasında yollar.** FSEvents yolları `/System/Volumes/Data/...` olarak mı yoksa firmlink yoluyla mı bildiriyor?
+  - Yol eşlemesi bunu bilmeli.
+  - "Not Now"daki "Macintosh HD toplamı diski aşıyor" hatasıyla bağlantılı olabilir.
+- **Tam Disk Erişimi (FDA).** FDA yokken korumalı klasörlerden olay geliyor mu? Gelmiyorsa o klasörler sessizce eski kalır.
+- **Gizli pencere.** Pencere gizliyken izleme duraklasın mı?
+- **Ayarlar.** Canlı güncelleme için bir aç/kapa ayarı gerekir mi? Öneri: ilk sürümde hep açık, ayar yok.
+
+#### Riskler
+- Sürekli değişen klasörler CPU ve pil tüketebilir. Birleştirme penceresi ve tam taramaya düşme eşiği bunu sınırlar; ölçülmeli.
+- Kimlik korunsa da yeniden aşılanan alt ağaçlarda UI'ın tuttuğu eski kimlikler `unknownNode` olur. UI'ın ata'ya çıkma yolu sağlam olmalı.
+- Hardlink toplamları yama sonrası yaklaşık kalır.
+- Kilit altında süren uzun bir yama UI sorgularını bekletir. Yalnız ağaç güncellemesi kilit altında olmalı.
+
+#### Doğrulama
+- `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo check --all-targets`, `cargo test`, `cargo build --release`.
+- `pnpm --dir ui typecheck && pnpm --dir ui lint && pnpm --dir ui build`.
+- `tauri dev` içinde elle deneme:
+  - `~/Downloads` tara, Finder'da dosya ekle, sil ve büyüt; birkaç saniyede görünmeli.
+  - Bir klasörü komple sil; açık görünüm atasına çıkmalı.
+  - ⌘R / HMR sonrası tarama yerinde olmalı.
+  - Yoğun yazan bir klasörde (`cargo build` sırasında `target/`) CPU'yu izle.
+
 ---
 
 ## Done
@@ -808,5 +1003,6 @@ _2026-11-14: Plan, bağımlılıklar ve Windows **A seçeneği** onaylandı._
 Parked scope — deferred work, revisit when prioritized. (CLAUDE.md → Scope Discipline routes out-of-scope items here.)
 
 - **Macintosh HD toplamı diski aşıyor** (2026-11-16, #30 denemesi sırasında): tarama 1,6 TB gösterdi (System 833 GB, Users 626 GB), disk ise 953 GB dolu; ilerleme çubuğu da "yaklaşık 953 GB" tahminini geçti. `cross_mounts: false` ve "20 diğer birim dışarıda" olmasına rağmen Data birimi `/System/Volumes/Data` ve firmlink'ler üzerinden iki kez sayılıyor olabilir. Ayrı hata; #30 kapsamı dışında.
+- **Taramanın disk önbelleği** (2026-11-16, canlı tarama planından ertelendi): yalnız süreç yeniden başlamasını çözer; doğru olması için FSEvents `sinceWhen` geriye oynatması gerekir. v1.x "Anlık görüntü ve fark" ile birlikte ele alınmalı. Linux (`inotify` izleme sınırı) ve Windows canlı izleme de ayrı iş.
 - **Silme logunu uygulamadan göster** (#32'den ertelendi): "Logu göster" düğmesi `deletions.jsonl` dosyasını dosya yöneticisinde açabilir; yeni IPC komutu gerektirdiği için #32 kapsamı dışında bırakıldı.
 - **Döküm "Aç →" dokunmatikte görünmüyor** (#28 interface-check, Minor): `ui/src/screens/Summary.tsx:309` yalnızca hover/odakta görünür; Tailwind v4 `group-hover` `(hover: hover)` ile kapılı olduğundan dokunmatik ekranda tıklanabilir ama görünmez. Masaüstü uygulamasında pratik etkisi yok; dokunmatik/Linux tablet desteği gündeme gelirse `@media (hover: none)` altında sürekli göster.
