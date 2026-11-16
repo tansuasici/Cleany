@@ -7,7 +7,7 @@
 //! parent, so a single reverse pass over the arena aggregates the whole tree.
 
 use std::ffi::{OsStr, OsString};
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 
 use thiserror::Error;
 
@@ -429,6 +429,225 @@ impl Tree {
         Some(removed)
     }
 
+    /// The live node at `path`, walking from the root one component at a
+    /// time and matching children by name. `path` must start with the root
+    /// path exactly as scanned. Detached nodes are never found.
+    ///
+    /// Each step is linear in the number of siblings.
+    #[must_use]
+    pub fn lookup(&self, path: &Path) -> Option<NodeId> {
+        let root = self.path(self.root())?;
+        let rel = path.strip_prefix(&root).ok()?;
+        let mut cur = self.root();
+        for comp in rel.components() {
+            match comp {
+                Component::Normal(name) => {
+                    cur = self.children(cur).find(|&c| {
+                        self.node(c)
+                            .is_some_and(|n| self.arena.names.matches(n.name_off, n.name_len, name))
+                    })?;
+                }
+                Component::CurDir => {}
+                _ => return None,
+            }
+        }
+        Some(cur)
+    }
+
+    /// Sets a non-directory's own size and modification time in place and
+    /// moves the size difference onto every ancestor. The id is unchanged.
+    /// A [`NodeFlags::HARDLINK`] node keeps its zero size (its bytes are
+    /// counted elsewhere); only its time changes.
+    ///
+    /// Returns whether anything changed.
+    ///
+    /// # Errors
+    /// [`TreeError::NotAFile`] if `id` is a directory, detached or not in
+    /// this tree.
+    pub fn update_entry(&mut self, id: NodeId, size: Size, mtime: i64) -> Result<bool, TreeError> {
+        if !self.is_live(id) {
+            return Err(TreeError::NotAFile);
+        }
+        let n = match self.arena.nodes.get_mut(id.index()) {
+            Some(n) if n.kind != NodeKind::Dir => n,
+            _ => return Err(TreeError::NotAFile),
+        };
+        let new = if n.flags.contains(NodeFlags::HARDLINK) {
+            n.size
+        } else {
+            size
+        };
+        let old = n.size;
+        if old == new && n.mtime == mtime {
+            return Ok(false);
+        }
+        n.size = new;
+        n.mtime = mtime;
+        let mut cur = n.parent;
+        while let Some(a) = self.arena.nodes.get_mut(cur as usize) {
+            a.size = a.size.saturating_sub(old).saturating_add(new);
+            cur = a.parent;
+        }
+        Ok(true)
+    }
+
+    /// Adds a new entry under the live directory `parent` of a finished
+    /// tree, at the end of the arena, and adds its size and file count to
+    /// every ancestor. Existing ids keep their meaning.
+    ///
+    /// # Errors
+    /// [`TreeError::InvalidParent`] if `parent` is not a live directory,
+    /// otherwise a capacity error from the arena or name pool.
+    pub fn add_child(
+        &mut self,
+        parent: NodeId,
+        name: &OsStr,
+        info: EntryInfo,
+    ) -> Result<NodeId, TreeError> {
+        self.live_dir(parent)?;
+        let raw = self.next_raw(1)?;
+        let (name_off, name_len) = self.arena.names.push(name)?;
+        let node = new_node(parent.0, name_off, name_len, info);
+        let (size, files) = (node.size, node.file_count);
+        self.arena.nodes.push(node);
+        self.link(parent, raw, raw)?;
+        self.add_totals(parent, size, files);
+        Ok(NodeId(raw))
+    }
+
+    /// Appends the whole of `sub` (e.g. a fresh [`crate::scan`] of a new
+    /// directory) as a new child `name` of the live directory `parent`. The
+    /// grafted root keeps `sub`'s aggregated totals, which are added to every
+    /// ancestor. Existing ids keep their meaning; `sub`'s ids do not carry
+    /// over. Hard links are deduplicated only within `sub`.
+    ///
+    /// # Errors
+    /// [`TreeError::InvalidParent`] if `parent` is not a live directory,
+    /// otherwise a capacity error.
+    pub fn graft(&mut self, parent: NodeId, name: &OsStr, sub: &Tree) -> Result<NodeId, TreeError> {
+        let base = self.splice(parent, sub, Some(name))?;
+        Ok(NodeId(base))
+    }
+
+    /// Like [`Tree::graft`], but `sub`'s root is dropped and its children
+    /// become children of `parent` (used to rescan a directory in place, so
+    /// its own id survives). Totals of the added children go to `parent` and
+    /// every ancestor.
+    ///
+    /// # Errors
+    /// See [`Tree::graft`].
+    pub fn graft_children(&mut self, parent: NodeId, sub: &Tree) -> Result<(), TreeError> {
+        self.splice(parent, sub, None).map(|_| ())
+    }
+
+    /// Appends `sub`'s nodes after the arena, rebasing their links. With
+    /// `name`, `sub`'s root becomes one new child of `parent`; without, the
+    /// root is skipped and its children are linked under `parent`. Returns
+    /// the arena index of the first appended node.
+    fn splice(
+        &mut self,
+        parent: NodeId,
+        sub: &Tree,
+        name: Option<&OsStr>,
+    ) -> Result<u32, TreeError> {
+        self.live_dir(parent)?;
+        let skip = u32::from(name.is_none());
+        let sub_len = u32::try_from(sub.len()).map_err(|_| TreeError::TooManyNodes)?;
+        let base = self.next_raw(sub_len.saturating_sub(skip))?;
+        // Old index `i` (>= skip) moves to `base + i - skip`; the skipped root
+        // maps to `parent`.
+        let map = |raw: u32| match raw {
+            NONE => NONE,
+            r if r < skip => parent.0,
+            r => base + (r - skip),
+        };
+        // Build every node (and its name) before touching the arena, so a
+        // capacity error leaves the tree unchanged.
+        let mut fresh = Vec::with_capacity(sub.len());
+        for (i, n) in sub.arena.nodes.iter().enumerate().skip(skip as usize) {
+            let own_name = match (i, name) {
+                (0, Some(name)) => name.to_os_string(),
+                _ => sub.arena.names.get(n.name_off, n.name_len),
+            };
+            let (name_off, name_len) = self.arena.names.push(&own_name)?;
+            let mut node = n.clone();
+            node.parent = if i == 0 { parent.0 } else { map(n.parent) };
+            node.first_child = map(n.first_child);
+            node.next_sibling = if i == 0 { NONE } else { map(n.next_sibling) };
+            node.name_off = name_off;
+            node.name_len = name_len;
+            fresh.push(node);
+        }
+        let sub_root = sub.node(sub.root()).ok_or(TreeError::InvalidParent)?;
+        let (head, size, files) = if name.is_some() {
+            (base, sub_root.size, sub_root.file_count)
+        } else {
+            let (size, files) = sub
+                .children(sub.root())
+                .filter_map(|c| sub.node(c))
+                .fold((Size::default(), 0u32), |(s, f), n| {
+                    (s.saturating_add(n.size), f.saturating_add(n.file_count))
+                });
+            (map(sub_root.first_child), size, files)
+        };
+        self.arena.nodes.extend(fresh);
+        if head != NONE {
+            // The last node of the new sibling chain links to the old head.
+            let mut tail = head;
+            while let Some(next) = self.node(NodeId(tail)).map(|n| n.next_sibling) {
+                if next == NONE {
+                    break;
+                }
+                tail = next;
+            }
+            self.link(parent, head, tail)?;
+            self.add_totals(parent, size, files);
+        }
+        Ok(base)
+    }
+
+    /// `Ok` if `id` is a live directory.
+    fn live_dir(&self, id: NodeId) -> Result<(), TreeError> {
+        match self.node(id) {
+            Some(n) if n.kind == NodeKind::Dir && self.is_live(id) => Ok(()),
+            _ => Err(TreeError::InvalidParent),
+        }
+    }
+
+    /// Arena index of the next node, if `count` more nodes still fit.
+    fn next_raw(&self, count: u32) -> Result<u32, TreeError> {
+        let raw = u32::try_from(self.arena.nodes.len()).map_err(|_| TreeError::TooManyNodes)?;
+        match raw.checked_add(count) {
+            Some(end) if end < NONE => Ok(raw),
+            _ => Err(TreeError::TooManyNodes),
+        }
+    }
+
+    /// Prepends the sibling chain `head..=tail` to `parent`'s children.
+    fn link(&mut self, parent: NodeId, head: u32, tail: u32) -> Result<(), TreeError> {
+        let nodes = &mut self.arena.nodes;
+        let p = nodes
+            .get_mut(parent.index())
+            .ok_or(TreeError::InvalidParent)?;
+        let old_first = p.first_child;
+        p.first_child = head;
+        let t = nodes
+            .get_mut(tail as usize)
+            .ok_or(TreeError::InvalidParent)?;
+        t.next_sibling = old_first;
+        Ok(())
+    }
+
+    /// Adds `size` and `files` to `from` and every ancestor.
+    fn add_totals(&mut self, from: NodeId, size: Size, files: u32) {
+        let mut cur = from.0;
+        while let Some(a) = self.arena.nodes.get_mut(cur as usize) {
+            a.size = a.size.saturating_add(size);
+            a.file_count = a.file_count.saturating_add(files);
+            cur = a.parent;
+        }
+    }
+
     /// Name of the entry (the full scanned path for the root).
     #[must_use]
     pub fn name(&self, id: NodeId) -> Option<OsString> {
@@ -708,5 +927,118 @@ mod tests {
         }
         assert!(t.node(sub).unwrap().flags().contains(NodeFlags::DETACHED));
         assert_eq!(t.node(t.root()).unwrap().file_count(), 1);
+    }
+
+    /// `/r` with `sub/{a 10, b 20}` and `c 5`; every entry allocates 4096.
+    fn patch_fixture() -> (Tree, super::NodeId, super::NodeId) {
+        let mut b = TreeBuilder::new(OsStr::new("/r"), info(NodeKind::Dir, 0, 4096)).unwrap();
+        let root = b.root();
+        let sub = b
+            .add_child(root, OsStr::new("sub"), info(NodeKind::Dir, 0, 4096))
+            .unwrap();
+        let a = b
+            .add_child(sub, OsStr::new("a"), info(NodeKind::File, 10, 4096))
+            .unwrap();
+        b.add_child(sub, OsStr::new("b"), info(NodeKind::File, 20, 4096))
+            .unwrap();
+        b.add_child(root, OsStr::new("c"), info(NodeKind::File, 5, 4096))
+            .unwrap();
+        (b.finish(), sub, a)
+    }
+
+    #[test]
+    fn update_entry_moves_size_delta_to_every_ancestor() {
+        let (mut t, sub, a) = patch_fixture();
+        let new = Size {
+            logical: 110,
+            allocated: 8192,
+        };
+        assert_eq!(t.update_entry(a, new, 7), Ok(true));
+        assert_eq!(t.update_entry(a, new, 7), Ok(false));
+        assert_eq!(t.node(a).unwrap().size(), new);
+        assert_eq!(t.node(a).unwrap().mtime(), 7);
+        assert_eq!(t.node(sub).unwrap().size().logical, 130);
+        assert_eq!(t.node(sub).unwrap().size().allocated, 4 * 4096);
+        let r = t.node(t.root()).unwrap();
+        assert_eq!(r.size().logical, 135);
+        assert_eq!(r.size().allocated, 6 * 4096);
+        assert_eq!(r.file_count(), 3);
+        assert_eq!(t.update_entry(sub, new, 0), Err(TreeError::NotAFile));
+        t.detach(a).unwrap();
+        assert_eq!(t.update_entry(a, new, 0), Err(TreeError::NotAFile));
+    }
+
+    #[test]
+    fn graft_appends_subtree_and_keeps_existing_ids() {
+        let (mut t, sub, a) = patch_fixture();
+        let before = t.len();
+        // A scanned subtree: `/elsewhere/new` with `x 3` and `deep/y 4`.
+        let mut b =
+            TreeBuilder::new(OsStr::new("/elsewhere/new"), info(NodeKind::Dir, 0, 4096)).unwrap();
+        let sr = b.root();
+        b.add_child(sr, OsStr::new("x"), info(NodeKind::File, 3, 4096))
+            .unwrap();
+        let deep = b
+            .add_child(sr, OsStr::new("deep"), info(NodeKind::Dir, 0, 4096))
+            .unwrap();
+        b.add_child(deep, OsStr::new("y"), info(NodeKind::File, 4, 4096))
+            .unwrap();
+        let sub_tree = b.finish();
+
+        let new = t.graft(sub, OsStr::new("new"), &sub_tree).unwrap();
+        assert_eq!(t.len(), before + 4);
+        assert_eq!(t.name(a).unwrap(), "a");
+        assert_eq!(t.node(new).unwrap().parent(), Some(sub));
+        assert_eq!(
+            t.lookup(&PathBuf::from("/r/sub/new/deep/y")).map(|id| t
+                .node(id)
+                .unwrap()
+                .size()
+                .logical),
+            Some(4)
+        );
+        assert_eq!(t.node(sub).unwrap().size().logical, 37);
+        assert_eq!(t.node(sub).unwrap().file_count(), 4);
+        assert_eq!(t.node(t.root()).unwrap().size().logical, 42);
+
+        // Grafting only the children merges them into an existing dir.
+        let c = t.lookup(&PathBuf::from("/r/sub/new")).unwrap();
+        for child in t.children(c).collect::<Vec<_>>() {
+            t.detach(child).unwrap();
+        }
+        assert_eq!(t.node(c).unwrap().size().logical, 0);
+        t.graft_children(c, &sub_tree).unwrap();
+        let mut names: Vec<_> = t.children(c).map(|id| t.name(id).unwrap()).collect();
+        names.sort();
+        assert_eq!(names, ["deep", "x"]);
+        assert_eq!(t.node(c).unwrap().size().logical, 7);
+        assert_eq!(t.node(c).unwrap().size().allocated, 4 * 4096);
+        assert_eq!(t.node(t.root()).unwrap().size().logical, 42);
+        assert_eq!(t.node(t.root()).unwrap().file_count(), 5);
+
+        let leaf = t
+            .add_child(c, OsStr::new("z"), info(NodeKind::File, 1, 4096))
+            .unwrap();
+        assert_eq!(t.node(leaf).unwrap().parent(), Some(c));
+        assert_eq!(t.node(t.root()).unwrap().size().logical, 43);
+        assert_eq!(
+            t.add_child(leaf, OsStr::new("q"), info(NodeKind::File, 1, 1)),
+            Err(TreeError::InvalidParent)
+        );
+    }
+
+    #[test]
+    fn lookup_finds_node_by_path_and_refuses_detached() {
+        let (mut t, sub, a) = patch_fixture();
+        assert_eq!(t.lookup(&PathBuf::from("/r")), Some(t.root()));
+        assert_eq!(t.lookup(&PathBuf::from("/r/sub")), Some(sub));
+        assert_eq!(t.lookup(&PathBuf::from("/r/sub/a")), Some(a));
+        assert_eq!(t.lookup(&PathBuf::from("/r/./sub/a")), Some(a));
+        assert_eq!(t.lookup(&PathBuf::from("/r/sub/zzz")), None);
+        assert_eq!(t.lookup(&PathBuf::from("/r/sub/../c")), None);
+        assert_eq!(t.lookup(&PathBuf::from("/other/sub")), None);
+        t.detach(sub).unwrap();
+        assert_eq!(t.lookup(&PathBuf::from("/r/sub")), None);
+        assert_eq!(t.lookup(&PathBuf::from("/r/sub/a")), None);
     }
 }
