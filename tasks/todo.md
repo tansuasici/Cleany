@@ -9,9 +9,75 @@ Give the task you are actively working on an `h3` heading under **In Progress** 
 
 ## In Progress
 
-### M4 — Korumalı yollar listesi + silme logu (Notion #32)
+### M4 — Seçim sepeti + toplam kazanılacak alan (Notion #33)
 
-**Durum (2026-11-16)**: Uygulandı. fmt, clippy (macOS/Windows/Linux hedefleri), check, test, release build ve UI typecheck/lint/build geçti. Gerçek macOS'ta liste geçici bir programla doğrulandı. Uygulama içinden çöpe taşıma ve log dosyası elle denenmedi. Commit ve PR bekleniyor.
+**Durum (2026-11-16)**: Uygulandı, PR açıldı. typecheck, lint ve build temiz. Çalışan uygulamada elle denenmedi.
+
+**Hedef**:
+- Birden çok öğe toplanıp tek onayla çöpe taşınabilir.
+- Sepet her an toplam kazanılacak alanı gösterir.
+- docs/PLAN.md:44 ve :61: "seç → sepete ekle → 'Çöpe taşı' onayı".
+
+**Bağlam**:
+- Backend zaten çoklu öğeyi destekliyor: `trash_nodes(scan, nodes[])`. İç içe istenen öğeler raporda tekrar sayılmaz.
+- Bu yüzden iş yalnız arayüzde. Rust, IPC ve yetenek (capability) değişikliği yok.
+- Dal: `feat/m4-basket`.
+
+#### Tasarım kararları
+- **Durum `store.ts` içinde tutulur.**
+  - Yapı: `basket: { scan, items: BasketItem[] } | null`.
+  - `BasketItem` alanları: `id`, `name`, `kind`, `allocated` ve `chain` (atalarının id'leri).
+  - Yeni tarama sepeti boşaltır. Tablo ile döküm arasında geçiş sepeti korur.
+- **Ekleme ve çıkarma.**
+  - Ekle/çıkar düğmesi işlem çubuğunda (ActionBar) durur. Klavye kısayolu Space'tir ve üç görünümde de çalışır.
+  - Seçili öğeye, seçim yoksa ekrandaki klasöre uygulanır.
+  - Taramanın kökü eklenemez.
+  - `chain` ve güncel boyut eklenirken `getAncestors` ile alınır.
+- **Çakışma: aynı alan iki kez sayılmaz.**
+  - Sepetteki bir klasörün altındaki öğe eklenmez. Durum satırında "“X” zaten sepetteki “Y” klasörüne dahil." yazar.
+  - Sepetteki öğeleri içeren bir klasör eklenirse o öğeler sepetten çıkar ve klasör eklenir. Durum satırında bu söylenir.
+  - Toplam, öğelerin `allocated` toplamıdır. Tasarım gereği çakışma olmaz.
+  - Öğeler arasındaki hardlink'ler toplamda fazla sayılabilir. Gerçekten boşalan alanı çöpe taşıma sonrası rapor söyler.
+- **İşaret.**
+  - Tablodaki satırda, adın önünde küçük bir sepet işareti görünür. Ekran okuyucuya "sepette" denir.
+  - Harita ve halka görünümlerinde işaret yok. Seçim satırında "Sepette" yazar. Bu bilinçli bir kapsam sınırı.
+- **Sepet şeridi.**
+  - İşlem çubuğunun altında durur ve yalnız sepet doluyken görünür.
+  - İçeriği: "Sepet · 3 öğe · Kazanılacak alan 12,4 GB", "Sepeti çöpe taşı", "Boşalt" ve "Listeyi göster".
+  - Liste her öğe için adını ve boyutunu (LeaderRow) ve bir "Çıkar" düğmesini gösterir.
+- **Onay penceresi.**
+  - `TrashDialog` birden çok öğe alacak şekilde genelleşir.
+  - Başlık: "3 öğe çöpe taşınsın mı?".
+  - Gövde: en fazla 5 satır, kalanlar için "+k öğe daha" ve en altta "Boşalacak alan" toplamı.
+  - Tek öğe akışı (⌘⌫ / Delete) olduğu gibi kalır.
+- **Çöpe taşıma sonrası.**
+  - Rapor özetlenir: "3 öğe çöpe taşındı. X alan boşaldı." Taşınamayanlar için uyarılar eklenir.
+  - Taşınan ve bulunamayan öğeler sepetten çıkar. Korumalı ve hatalı olanlar sepette kalır.
+  - Tek öğe çöpe taşınınca, sepette o öğe veya altındakiler varsa onlar da sepetten düşer.
+
+#### Dosyalar
+- `ui/src/store.ts`: sepet durumu ve eylemleri.
+- `ui/src/screens/Basket.tsx` (yeni): sepet şeridi ve listesi.
+- `ui/src/screens/BrowseActions.tsx`: ekle/çıkar düğmesi, çok öğeli `TrashDialog`.
+- `ui/src/screens/useBrowseActions.ts`: Space kısayolu.
+- `ui/src/screens/Browse.tsx`: bağlantılar ve satır işareti.
+- `ui/src/lib/i18n.ts`: TR ve EN metinleri.
+- `CODEBASE_MAP.md`: gerekirse bir satır.
+
+#### Doğrulama
+- `pnpm --dir ui typecheck && pnpm --dir ui lint && pnpm --dir ui build`.
+- Rust tarafı değişmediği için Rust kontrolleri yalnız güvence olarak çalışır.
+- `tauri dev` içinde elle kontrol: ekle, çakışma, Space, onay, rapor, tek öğe silmenin sepeti budaması.
+
+## Up Next
+
+---
+
+## Done
+
+### M4 — Korumalı yollar listesi + silme logu (Notion #32) ✅ 2026-11-16 (#28 merged)
+
+**Durum (2026-11-16)**: #28 ile merge edildi. Uygulama içinden çöpe taşıma ve log dosyası elle denenmedi.
 
 **Hedef**:
 - İşletim sisteminin kendi klasörleri hiçbir zaman çöpe taşınamaz. Örnekler: `/System`, `/usr`, `C:\Windows`, `C:\Program Files`, ev dizininin kökü.
@@ -133,11 +199,6 @@ Give the task you are actively working on an `h3` heading under **In Progress** 
 - Liste fazla geniş olursa kullanıcıyı engeller, fazla dar olursa korumaz. `/Library` ve `~/Library` yalnız kendileri korunduğu için içlerindeki önbellekler temizlenebilir kalır.
 - Kimlik okuma maliyeti, girdi sayısı (~25) kadar `stat` çağrısıdır ve her taşıma isteğinde bir kez yapılır. Sepetteki (#33) çok öğeli isteklerde de liste bir kez kurulur.
 
-## Up Next
-
----
-
-## Done
 
 ### M4 — Çöpe taşı (varsayılan) + sonuç raporu (Notion #30) ✅ 2026-11-16 (#26 merged)
 

@@ -76,11 +76,15 @@ export function useBrowseActions(scan: ScanId, target: ActionTarget) {
 
 export type Actions = ReturnType<typeof useBrowseActions>
 
+/** Controls that Space already presses; the basket key leaves them alone. */
+const PRESSABLE = 'button, a[href], select, summary, [role="button"], [role="radio"], [role="checkbox"], [role="switch"], [role="tab"], [role="menuitem"]'
+
 /**
- * R shows, O opens, ⌘C / Ctrl+C copies the path. Bound on the Browse section
- * so every view gets them; the views leave these keys alone.
+ * R shows, O opens, ⌘C / Ctrl+C copies the path, Space puts the target in the
+ * basket or takes it out. Bound on the Browse section so every view gets
+ * them; the views leave these keys alone.
  */
-export function actionKeys(actions: Actions) {
+export function actionKeys(actions: Actions, toggleBasket: () => void) {
   return (e: KeyboardEvent<HTMLElement>) => {
     if (e.defaultPrevented || e.altKey || e.shiftKey) return
     const el = e.target as HTMLElement
@@ -92,6 +96,9 @@ export function actionKeys(actions: Actions) {
     if (!mod && (key === 'r' || key === 'o')) {
       // Holding the key must not open a window per repeat.
       if (!e.repeat) (key === 'r' ? actions.reveal : actions.open)()
+    } else if (!mod && e.key === ' ') {
+      if (el.closest(PRESSABLE)) return
+      if (!e.repeat) toggleBasket()
     } else if (mod && key === 'c') {
       // Selected text copies as usual.
       if (window.getSelection()?.toString()) return

@@ -12,7 +12,8 @@ import {
   trashNodes,
 } from '../lib/ipc'
 import { type BrowseScreen, useStore } from '../store'
-import { ActionBar, type TrashNote, TrashDialog } from './BrowseActions'
+import { BasketBar } from './Basket'
+import { ActionBar, BasketTrashDialog, type TrashNote, TrashDialog } from './BrowseActions'
 import { useOs } from '../useOs'
 import { type ActionTarget, actionKeys, trashKey, useBrowseActions } from './useBrowseActions'
 import { Sunburst } from './Sunburst'
@@ -54,6 +55,11 @@ function initialView(): View {
   }
 }
 
+/** The trash question on show: one item, or the whole basket. */
+type Asking = { kind: 'one'; target: ActionTarget } | { kind: 'basket' }
+
+const NO_ITEMS: readonly number[] = []
+
 const opens = (row: NodeEntry | undefined): row is NodeEntry =>
   row !== undefined && row.kind === 'dir' && row.hasChildren
 
@@ -63,6 +69,11 @@ export function BrowseView({ screen }: { screen: BrowseScreen }) {
   const browse = useStore((s) => s.browse)
   const showSummary = useStore((s) => s.showSummary)
   const trashed = useStore((s) => s.trashed)
+  const basket = useStore((s) => s.basket)
+  const addToBasket = useStore((s) => s.addToBasket)
+  const removeFromBasket = useStore((s) => s.removeFromBasket)
+  const clearBasket = useStore((s) => s.clearBasket)
+  const refreshBasket = useStore((s) => s.refreshBasket)
   const { done, node } = screen
   const scan = done.summary.scan
   const [sort, setSort] = useState<Sort>({ key: 'allocated', order: 'desc' })
@@ -88,14 +99,59 @@ export function BrowseView({ screen }: { screen: BrowseScreen }) {
   const os = useOs()
 
   // Moving to the trash: what is being asked about, and what the last move did.
-  const [asking, setAsking] = useState<ActionTarget | null>(null)
+  const [asking, setAsking] = useState<Asking | null>(null)
   const [working, setWorking] = useState(false)
   const [note, setNote] = useState<TrashNote | null>(null)
   // Bumped after a move, so the view on show reads the tree again.
   const [rev, setRev] = useState(0)
   const canTrash = target.id !== done.summary.root.id
   const askTrash = () => {
-    if (canTrash && !asking) setAsking(target)
+    if (canTrash && !asking) setAsking({ kind: 'one', target })
+  }
+
+  const basketItems = basket?.scan === scan ? basket.items : null
+  const basketIds = basketItems?.map((b) => b.id) ?? NO_ITEMS
+  const inBasket = basketIds.includes(target.id)
+  const toggleBasket = async () => {
+    if (!canTrash) return
+    const at = target
+    if (inBasket) {
+      removeFromBasket(at.id)
+      setNote({ status: t('basket.removed', { name: at.name }), alert: '' })
+      return
+    }
+    let chain: NodeEntry[]
+    try {
+      chain = await getAncestors(scan, at.id)
+    } catch {
+      setNote({ status: '', alert: t('basket.addError', { name: at.name }) })
+      return
+    }
+    const entry = chain.at(-1)
+    if (!entry) return
+    const { id, kind, allocated, files } = entry
+    const result = addToBasket(scan, {
+      id,
+      name: at.name,
+      kind,
+      allocated,
+      files,
+      chain: chain.slice(0, -1).map((c) => c.id),
+    })
+    const status =
+      result.kind === 'covered'
+        ? t('basket.covered', { name: at.name, by: result.by })
+        : result.replaced > 0
+          ? t('basket.addedFolder', {
+              name: at.name,
+              n: formatCount(result.replaced, locale),
+              count: result.replaced,
+            })
+          : t('basket.added', { name: at.name })
+    setNote({ status, alert: '' })
+  }
+  const askBasket = () => {
+    if (basketItems && !asking) setAsking({ kind: 'basket' })
   }
 
   const describe = (report: TrashReport): TrashNote => {
@@ -105,7 +161,14 @@ export function BrowseView({ screen }: { screen: BrowseScreen }) {
       const name = item.name
       switch (item.outcome.kind) {
         case 'trashed':
-          status = t('trash.done', { name, size: formatBytes(report.freed.allocated, locale) })
+          status =
+            report.trashed > 1
+              ? t('basket.done', {
+                  n: formatCount(report.trashed, locale),
+                  count: report.trashed,
+                  size: formatBytes(report.freed.allocated, locale),
+                })
+              : t('trash.done', { name, size: formatBytes(report.freed.allocated, locale) })
           break
         case 'gone':
           alerts.push(t('trash.gone', { name }))
@@ -141,10 +204,12 @@ export function BrowseView({ screen }: { screen: BrowseScreen }) {
 
   const confirmTrash = async () => {
     if (!asking) return
+    const ids = asking.kind === 'one' ? [asking.target.id] : (basketItems ?? []).map((b) => b.id)
+    if (ids.length === 0) return
     setWorking(true)
     let report: TrashReport
     try {
-      report = await trashNodes(scan, [asking.id])
+      report = await trashNodes(scan, ids)
     } catch {
       setNote({ status: '', alert: t('trash.error') })
       return
@@ -156,6 +221,8 @@ export function BrowseView({ screen }: { screen: BrowseScreen }) {
     setNote(describe(report))
     if (report.root) trashed(scan, report.root)
     if (report.items.some((i) => i.outcome.kind === 'trashed' || i.outcome.kind === 'gone')) {
+      // Drops what went and what was inside it; protected and failed items stay.
+      await refreshBasket(scan)
       setPicked(null)
       await settle()
       setRev((r) => r + 1)
@@ -179,7 +246,7 @@ export function BrowseView({ screen }: { screen: BrowseScreen }) {
   return (
     <section
       aria-labelledby="browse-title"
-      onKeyDown={actionKeys(actions)}
+      onKeyDown={actionKeys(actions, () => void toggleBasket())}
       onKeyDownCapture={trashKey(os === 'macos', askTrash)}
       className="mx-auto flex h-full w-full max-w-240 flex-col px-8 pt-8 pb-4">
       <h1 id="browse-title" className="text-title font-medium">
@@ -215,6 +282,7 @@ export function BrowseView({ screen }: { screen: BrowseScreen }) {
           onUp={up}
           onExit={showSummary}
           onSelect={setPicked}
+          basketIds={basketIds}
         />
       ) : view === 'map' ? (
         <Treemap
@@ -251,15 +319,33 @@ export function BrowseView({ screen }: { screen: BrowseScreen }) {
           os={os}
           canTrash={canTrash}
           onTrash={askTrash}
+          inBasket={inBasket}
+          onBasket={() => void toggleBasket()}
           note={note}
         />
+        {basketItems && (
+          <BasketBar
+            basket={{ scan, items: basketItems }}
+            onTrash={askBasket}
+            onRemove={removeFromBasket}
+            onClear={clearBasket}
+          />
+        )}
         <p className="text-meta text-ink-3">{t(HINT_TEXT[view])}</p>
       </div>
 
-      {asking && (
+      {asking?.kind === 'one' && (
         <TrashDialog
           scan={scan}
-          target={asking}
+          target={asking.target}
+          working={working}
+          onCancel={() => setAsking(null)}
+          onConfirm={() => void confirmTrash()}
+        />
+      )}
+      {asking?.kind === 'basket' && basketItems && (
+        <BasketTrashDialog
+          items={basketItems}
           working={working}
           onCancel={() => setAsking(null)}
           onConfirm={() => void confirmTrash()}
@@ -330,6 +416,7 @@ function Table({
   onUp,
   onExit,
   onSelect,
+  basketIds,
 }: {
   scan: ScanId
   node: NodeEntry
@@ -341,6 +428,8 @@ function Table({
   onUp: () => void
   onExit: () => void
   onSelect: (target: ActionTarget | null) => void
+  /** Rows in the basket get a mark before the name. */
+  basketIds: readonly number[]
 }) {
   const { t, locale } = useT()
   const { pages, load, retry, row } = usePages(scan, node.id, sort)
@@ -501,6 +590,11 @@ function Table({
         {r ? (
           <>
             <span role="gridcell" className="flex min-w-0 items-center gap-1">
+              {basketIds.includes(r.id) && (
+                <span className="mr-1 size-1.5 shrink-0 rounded-full bg-ink-2">
+                  <span className="sr-only">{t('basket.mark')}</span>
+                </span>
+              )}
               <bdi className="truncate" title={r.name}>
                 {truncateMiddle(r.name, NAME_CHARS)}
               </bdi>
