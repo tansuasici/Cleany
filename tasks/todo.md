@@ -9,6 +9,31 @@ Give the task you are actively working on an `h3` heading under **In Progress** 
 
 ## In Progress
 
+### Gezinti — Browse başlığında Geri / İleri
+
+**Durum (2026-11-16)**: Uygulandı, commit edilmedi. typecheck, oxlint, build temiz; 375/768/1280 açık+koyu ekran görüntüleri ve klavye (Alt+←/→, Ctrl+[/], düz ← üst klasör) sahte IPC ile tarayıcıda doğrulandı. Masaüstü uygulamada ⌘[ elle denenmedi. Dal: `feat/browse-history` (main'den; `feat/live-session` ile çakışmayı küçük tutmak için ayrı worktree).
+
+**Hedef**: Browse ekranındaki klasör başlığının ("ad ······ boyut") soluna tarayıcıdaki gibi Geri / İleri düğmeleri.
+
+#### Tasarım kararları
+- **Durum `store.ts` içinde**: `history: { scan, entries: NodeEntry[], at: number } | null`.
+  - `browse(node)` geçmişe yazar: `entries[at]` ile aynı klasörse yerinde tazeler; değilse `at`'tan sonrasını atar (ileri yolu silinir) ve yeni klasörü ekler.
+  - Dökümden tabloya geçiş geçmişi silmez; aynı taramada süren bir gezinti sayılır.
+  - Yeni tarama (`scan`) geçmişi siler; `scan` alanı farklı bir taramaya ait geçmişi zaten geçersiz kılar.
+- **`go(step)` eylemi** (−1 geri, +1 ileri): hedef klasörü `getAncestors` ile tazeler. Çöpe taşınıp ağaçtan çıkmış bir kayıt geçmişten düşer ve bir sonrakine geçilir. Bekleyen yanıt, araya giren başka bir gezinti varsa uygulanmaz.
+- **Düğmeler**: mevcut `Button` (ikincil), yalnız simge (`ChevronIcon`, geri için yatay çevrilmiş), `aria-label`, `title` ve `aria-keyshortcuts`. Geçmiş yoksa `disabled`. Yeni simge, token veya animasyon yok.
+- **Kısayollar**: macOS'ta ⌘[ / ⌘], diğer sistemlerde Ctrl+[ / Ctrl+]; her yerde Alt+← / Alt+→. Tuş konumu (`e.code`) okunur, Türkçe klavyede de çalışır. Yakalama (capture) aşamasında bağlanır; görünümler Alt+← tuşunu "üst klasör" olarak okumaz. Değiştiricisiz ← üst klasör davranışı aynen kalır.
+- **Geri gelinen klasör**: geçmişte yer değiştirince bırakılan klasör, yeni listede varsa seçili gelir (`cameFrom`).
+
+#### Dosyalar
+- `ui/src/store.ts`: `history`, `browse` içinde kayıt, `go`, `scan` içinde temizleme.
+- `ui/src/screens/Browse.tsx`: düğmeler ve kısayol.
+- `ui/src/lib/i18n.ts`: `browse.back`, `browse.forward`, `browse.history` (TR + EN).
+
+#### Doğrulama
+- `pnpm --dir ui typecheck`, `pnpm --dir ui lint`, `pnpm --dir ui build`.
+- 375 / 768 / 1280 genişlikte, açık ve koyu temada ekran görüntüsü.
+
 ### M4 — Seçim sepeti + toplam kazanılacak alan (Notion #33)
 
 **Durum (2026-11-16)**: Uygulandı, PR açıldı. typecheck, lint ve build temiz. Çalışan uygulamada elle denenmedi.

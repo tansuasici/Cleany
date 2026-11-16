@@ -83,6 +83,16 @@ export interface Basket {
   items: BasketItem[]
 }
 
+/**
+ * Folders opened in the tree table of one scan, oldest first; `at` is the one
+ * on show. Back and forward move `at`, as in a browser.
+ */
+export interface History {
+  scan: ScanId
+  entries: NodeEntry[]
+  at: number
+}
+
 /** What adding to the basket did. */
 export type BasketAdd =
   | { kind: 'added'; replaced: number }
@@ -126,6 +136,14 @@ interface State {
   openLast: () => void
   /** Opens the tree table at `node`, from the döküm or the table itself. */
   browse: (node: NodeEntry) => void
+  /** Folder history of the tree table; a new scan clears it. */
+  history: History | null
+  /**
+   * Moves back (`-1`) or forward (`1`) in the folder history. A folder no
+   * longer in the tree is dropped and the next one is tried. Resolves `true`
+   * once a folder is on show.
+   */
+  go: (step: -1 | 1) => Promise<boolean>
   /** Leaves the tree table for its döküm. */
   showSummary: () => void
   /** Opens or closes a döküm folder in place. */
@@ -218,6 +236,7 @@ export const useStore = create<State>()((set, get) => ({
   last: null,
   opened: [],
   basket: null,
+  history: null,
 
   setLocale: (locale) => {
     try {
@@ -259,6 +278,7 @@ export const useStore = create<State>()((set, get) => ({
     const gen = ++generation
     const current = () => gen === generation
     cancelPending = false
+    set({ history: null })
     set({ screen: { kind: 'scanning', target, scan: null, progress: null }, last: null, opened: [], basket: null })
 
     try {
@@ -350,7 +370,34 @@ export const useStore = create<State>()((set, get) => ({
     const done = screen.kind === 'done' ? screen : screen.kind === 'browse' ? screen.done : null
     if (!done) return
     const current = last?.summary.scan === done.summary.scan ? last : done
-    set({ screen: { kind: 'browse', done: current, node } })
+    set({ screen: { kind: 'browse', done: current, node }, history: record(get().history, done.summary.scan, node) })
+  },
+
+  go: async (step) => {
+    for (;;) {
+      const { screen, history } = get()
+      if (screen.kind !== 'browse' || history?.scan !== screen.done.summary.scan) return false
+      const at = history.at + step
+      const entry = history.entries[at]
+      if (!entry) return false
+      let fresh: NodeEntry | undefined
+      try {
+        // Read again: its size may have changed, or it may be gone.
+        fresh = (await getAncestors(history.scan, entry.id)).at(-1)
+      } catch {
+        fresh = undefined
+      }
+      const now = get()
+      // Another move, a trip to the döküm or a new scan came first.
+      if (now.history !== history || now.screen.kind !== 'browse') return false
+      if (fresh) {
+        const entries = history.entries.map((e, i) => (i === at ? fresh : e))
+        set({ screen: { ...now.screen, node: fresh }, history: { ...history, entries, at } })
+        return true
+      }
+      const entries = history.entries.filter((_, i) => i !== at)
+      set({ history: { ...history, entries, at: at < history.at ? history.at - 1 : history.at } })
+    }
   },
 
   showSummary: () => {
@@ -422,6 +469,18 @@ export const useStore = create<State>()((set, get) => ({
     set({ basket: items.length > 0 ? { ...now, items } : null })
   },
 }))
+
+/**
+ * `history` with `node` on show: the same folder is taken in place (a new
+ * size), another one drops the forward entries and is added, as in a browser.
+ */
+function record(history: History | null, scan: ScanId, node: NodeEntry): History {
+  const h = history?.scan === scan ? history : { scan, entries: [], at: -1 }
+  if (h.entries[h.at]?.id === node.id) {
+    return { ...h, entries: h.entries.map((e, i) => (i === h.at ? node : e)) }
+  }
+  return { scan, entries: [...h.entries.slice(0, h.at + 1), node], at: h.at + 1 }
+}
 
 async function loadTop(target: Target, summary: ScanSummary) {
   // Keyed by scan id, not generation: the result also lands in `last` when the

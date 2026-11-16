@@ -1,5 +1,5 @@
 import { type KeyboardEvent, useCallback, useEffect, useRef, useState } from 'react'
-import { ChevronIcon, LeaderRow, ShareBar } from '../components/ui'
+import { Button, ChevronIcon, LeaderRow, ShareBar } from '../components/ui'
 import { formatBytes, formatCount, formatDate, formatShare, truncateMiddle } from '../lib/format'
 import {
   type NodeEntry,
@@ -55,6 +55,32 @@ function initialView(): View {
   }
 }
 
+/**
+ * ⌘[ / ⌘] on macOS (Ctrl elsewhere) and Alt+← / Alt+→ everywhere move back
+ * and forward in the folder history. Reads the key's place (`code`), so it
+ * works on layouts where [ is not a key of its own. Bound in the capture
+ * phase so the views never read Alt+← as ← (up a folder).
+ */
+function historyKeys(mac: boolean, go: (step: -1 | 1) => void) {
+  return (e: KeyboardEvent<HTMLElement>) => {
+    const el = e.target as HTMLElement
+    if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable) return
+    if (el.closest('dialog')) return
+    if (e.shiftKey) return
+    const mod = mac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey
+    const alt = e.altKey && !e.metaKey && !e.ctrlKey
+    let step: -1 | 1
+    if (mod && !e.altKey && e.code === 'BracketLeft') step = -1
+    else if (mod && !e.altKey && e.code === 'BracketRight') step = 1
+    else if (alt && e.key === 'ArrowLeft') step = -1
+    else if (alt && e.key === 'ArrowRight') step = 1
+    else return
+    e.preventDefault()
+    e.stopPropagation()
+    if (!e.repeat) go(step)
+  }
+}
+
 /** The trash question on show: one item, or the whole basket. */
 type Asking = { kind: 'one'; target: ActionTarget } | { kind: 'basket' }
 
@@ -74,6 +100,8 @@ export function BrowseView({ screen }: { screen: BrowseScreen }) {
   const removeFromBasket = useStore((s) => s.removeFromBasket)
   const clearBasket = useStore((s) => s.clearBasket)
   const refreshBasket = useStore((s) => s.refreshBasket)
+  const history = useStore((s) => s.history)
+  const go = useStore((s) => s.go)
   const { done, node } = screen
   const scan = done.summary.scan
   const [sort, setSort] = useState<Sort>({ key: 'allocated', order: 'desc' })
@@ -240,6 +268,28 @@ export function BrowseView({ screen }: { screen: BrowseScreen }) {
     setNote(null)
     browse(parent)
   }
+  const ownHistory = history?.scan === scan ? history : null
+  const canBack = ownHistory !== null && ownHistory.at > 0
+  const canForward = ownHistory !== null && ownHistory.at < ownHistory.entries.length - 1
+  const step = (by: -1 | 1) => {
+    if (by < 0 ? !canBack : !canForward) return
+    // Set first, so the folder that comes into view selects the one left.
+    setCameFrom(node.id)
+    void go(by).then((moved) => {
+      if (moved) setNote(null)
+    })
+  }
+  const mac = os === 'macos'
+  const navKeys = {
+    back: { label: mac ? '⌘[' : 'Alt+←', aria: mac ? 'Meta+[ Alt+ArrowLeft' : 'Control+[ Alt+ArrowLeft' },
+    forward: { label: mac ? '⌘]' : 'Alt+→', aria: mac ? 'Meta+] Alt+ArrowRight' : 'Control+] Alt+ArrowRight' },
+  }
+  // `px-0!`: Button's own `px-3` comes later in the stylesheet and would win,
+  // leaving the icon 6px. `aria-disabled`, not `disabled`: a focused button that turns disabled
+  // drops focus to the page, and the section's keys stop working.
+  const navLook =
+    'w-8 justify-center px-0! aria-disabled:cursor-default aria-disabled:opacity-50 aria-disabled:hover:bg-card'
+
   const onSort = (key: SortKey) =>
     setSort((s) => (s.key === key ? { key, order: s.order === 'asc' ? 'desc' : 'asc' } : { key, order: firstOrder(key) }))
 
@@ -247,11 +297,42 @@ export function BrowseView({ screen }: { screen: BrowseScreen }) {
     <section
       aria-labelledby="browse-title"
       onKeyDown={actionKeys(actions, () => void toggleBasket())}
-      onKeyDownCapture={trashKey(os === 'macos', askTrash)}
+      onKeyDownCapture={(e) => {
+        trashKey(mac, askTrash)(e)
+        historyKeys(mac, step)(e)
+      }}
       className="mx-auto flex h-full w-full max-w-240 flex-col px-8 pt-8 pb-4">
-      <h1 id="browse-title" className="text-title font-medium">
-        <LeaderRow name={name} title={name} value={formatBytes(node.allocated, locale)} />
-      </h1>
+      <div className="flex min-w-0 items-center gap-3">
+        <div role="group" aria-label={t('browse.history')} className="flex shrink-0 gap-1">
+          <Button
+            aria-label={t('browse.back')}
+            aria-keyshortcuts={navKeys.back.aria}
+            aria-disabled={!canBack}
+            title={`${t('browse.back')} (${navKeys.back.label})`}
+            onClick={() => step(-1)}
+            className={navLook}
+          >
+            <span className="flex shrink-0 -scale-x-100">
+              <ChevronIcon />
+            </span>
+          </Button>
+          <Button
+            aria-label={t('browse.forward')}
+            aria-keyshortcuts={navKeys.forward.aria}
+            aria-disabled={!canForward}
+            title={`${t('browse.forward')} (${navKeys.forward.label})`}
+            onClick={() => step(1)}
+            className={navLook}
+          >
+            <span className="flex shrink-0">
+              <ChevronIcon />
+            </span>
+          </Button>
+        </div>
+        <h1 id="browse-title" className="min-w-0 flex-1 text-title font-medium">
+          <LeaderRow name={name} title={name} value={formatBytes(node.allocated, locale)} />
+        </h1>
+      </div>
 
       <div role="group" aria-label={t('browse.view')} className="mt-4 flex gap-1 self-start rounded-control border border-hairline bg-card p-0.5">
         {VIEWS.map((v) => (
