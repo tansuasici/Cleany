@@ -138,7 +138,7 @@ fn same_entry(a: &Path, b: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{TrashError, is_protected_with, move_to_trash, same_entry};
+    use super::{TrashError, is_protected_with, move_to_trash};
     use std::fs;
     use std::path::{Path, PathBuf};
 
@@ -202,6 +202,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn symlinked_spellings_match_and_links_are_not_followed() {
+        use super::same_entry;
+
         let dir = scratch("links");
         let real = dir.join("real");
         fs::create_dir_all(real.join("inner")).unwrap();
