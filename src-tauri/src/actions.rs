@@ -1,15 +1,18 @@
-//! Show, open and copy-path for a scanned node. The UI names a node; the path
-//! always comes from the scan tree, never from the webview.
+//! Show, open, copy-path and move-to-trash for scanned nodes. The UI names a
+//! node; the path always comes from the scan tree, never from the webview.
 //!
 //! Mirrors `ActionError` in `ui/src/lib/ipc.ts`;
 //! `ipc_ts_mentions_every_action_tag` catches drift.
 
 use std::fmt;
+use std::path::Path;
 
+use cleany_core::NodeKind;
 use cleany_platform::shell::{self, ShellError};
+use cleany_platform::trash::{self as os_trash, TrashError};
 use serde::Serialize;
 
-use crate::session::{ScanId, SessionError, Sessions};
+use crate::session::{ScanId, SessionError, Sessions, TrashOutcome, TrashReport};
 
 /// Why a show / open / copy-path request failed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -92,11 +95,52 @@ pub fn path_text(sessions: &Sessions, scan: ScanId, node: u32) -> Result<String,
     Ok(path.to_string_lossy().into_owned())
 }
 
+/// Moves `nodes` to the OS trash and takes them out of the scan tree.
+/// Per-item results are in the report; only request-level problems are errors.
+pub fn trash(sessions: &Sessions, scan: ScanId, nodes: &[u32]) -> Result<TrashReport, ActionError> {
+    Ok(sessions.trash(scan, nodes, move_one)?)
+}
+
+/// Trashes one item after the checks the tree cannot make: the protected
+/// paths on disk, and that the item still is what the scan saw.
+fn move_one(path: &Path, kind: NodeKind, scan_root: &Path) -> TrashOutcome {
+    let Ok(meta) = std::fs::symlink_metadata(path) else {
+        return TrashOutcome::Gone;
+    };
+    if os_trash::is_protected(path, scan_root) {
+        return TrashOutcome::Protected;
+    }
+    if !same_kind(meta.file_type(), kind) {
+        return TrashOutcome::Failed {
+            message: "changed kind since the scan".to_owned(),
+        };
+    }
+    match os_trash::move_to_trash(path) {
+        Ok(()) => TrashOutcome::Trashed,
+        Err(TrashError::Gone) => TrashOutcome::Gone,
+        Err(e @ TrashError::Failed(_)) => TrashOutcome::Failed {
+            message: e.to_string(),
+        },
+    }
+}
+
+/// Whether the entry on disk is still the kind the scan recorded.
+fn same_kind(ft: std::fs::FileType, kind: NodeKind) -> bool {
+    match kind {
+        NodeKind::Dir => ft.is_dir(),
+        NodeKind::File => ft.is_file(),
+        NodeKind::Symlink => ft.is_symlink(),
+        NodeKind::Other => !ft.is_dir() && !ft.is_file() && !ft.is_symlink(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::ActionError;
-    use crate::session::SessionError;
+    use super::{ActionError, move_one};
+    use crate::session::{SessionError, TrashOutcome};
+    use cleany_core::NodeKind;
     use cleany_platform::shell::ShellError;
+    use std::fs;
 
     #[test]
     fn errors_map_to_ui_kinds() {
@@ -109,6 +153,26 @@ mod tests {
             ActionError::from(ShellError::Unsupported),
             ActionError::Launch { .. }
         ));
+    }
+
+    #[test]
+    fn move_one_checks_before_touching_the_trash() {
+        let dir = std::env::temp_dir().join(format!("cleany-move-one-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("sub")).unwrap();
+        // Missing on disk.
+        assert_eq!(
+            move_one(&dir.join("nope"), NodeKind::File, &dir),
+            TrashOutcome::Gone
+        );
+        // The scan root itself.
+        assert_eq!(move_one(&dir, NodeKind::Dir, &dir), TrashOutcome::Protected);
+        // A folder the scan saw as a file.
+        assert!(matches!(
+            move_one(&dir.join("sub"), NodeKind::File, &dir),
+            TrashOutcome::Failed { .. }
+        ));
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
@@ -127,7 +191,12 @@ mod tests {
             let v = serde_json::to_value(e).unwrap();
             words.push(format!("'{}'", v["kind"].as_str().unwrap()));
         }
-        for cmd in ["'reveal_node'", "'open_node'", "'get_path'"] {
+        for cmd in [
+            "'reveal_node'",
+            "'open_node'",
+            "'get_path'",
+            "'trash_nodes'",
+        ] {
             words.push(cmd.to_owned());
         }
         let missing: Vec<_> = words.iter().filter(|w| !ts.contains(w.as_str())).collect();
