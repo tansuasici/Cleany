@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Button, LeaderRow, RemovableIcon, UsageBar, VolumeIcon } from '../components/ui'
+import { Button, LeaderRow, RemovableIcon, Size, UsageBar, VolumeIcon } from '../components/ui'
 import { formatAgo, formatBytes, truncateMiddle } from '../lib/format'
 import { type VolumeEntry, openDiskAccessSettings } from '../lib/ipc'
 import { useStore } from '../store'
@@ -22,7 +22,7 @@ export function VolumesScreen() {
   const lastPath = useStore((s) => s.last?.target.path)
 
   return (
-    <section aria-labelledby="volumes-title" className="mx-auto w-full max-w-200 px-8 py-16">
+    <section aria-labelledby="volumes-title" className="mx-auto w-full max-w-200 px-4 py-10 sm:px-8 sm:py-16">
       <h1 id="volumes-title" className="text-title font-medium">
         {t('volumes.title')}
       </h1>
@@ -47,7 +47,7 @@ export function VolumesScreen() {
           <p className="text-ink-2">{t('volumes.empty')}</p>
         )}
         {volumes.status === 'ready' && volumes.list.length > 0 && (
-          <ul className="divide-y divide-hairline rounded-panel border border-hairline bg-card">
+          <ul className="divide-y divide-hairline border-y border-hairline">
             {ordered(volumes.list).map((v, i, list) => (
               <li key={v.mount}>
                 {/* One primary per screen: the open breakdown if there is one, else the first volume. */}
@@ -129,7 +129,7 @@ function VolumeRow({ volume, primary, showMount }: { volume: VolumeEntry; primar
   const start = () => void scan({ path: volume.mount, name, used, free: volume.available })
 
   return (
-    <article aria-label={name} className="flex flex-col gap-4 p-6">
+    <article aria-label={name} className="flex flex-col gap-4 py-6">
       <div className="flex items-start gap-3">
         <span className="mt-0.5 text-ink-2">
           <VolumeIcon />
@@ -181,10 +181,10 @@ function VolumeRow({ volume, primary, showMount }: { volume: VolumeEntry; primar
       <div className="flex flex-col gap-2 pl-7">
         <p className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
           <span className="flex items-baseline gap-2">
-            <span className="font-mono text-figure font-medium tabular-nums">{bytes(volume.available)}</span>
+            <Size value={bytes(volume.available)} className="text-display font-medium" />
             <span className="text-ink-2">{t('volumes.free')}</span>
           </span>
-          <span className="font-mono text-secondary text-ink-2 tabular-nums">{usage}</span>
+          <span className="w-full text-secondary text-ink-2 tabular-nums sm:w-auto">{usage}</span>
         </p>
         <UsageBar
           total={volume.total}

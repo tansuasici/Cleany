@@ -1,5 +1,5 @@
 import { type SyntheticEvent, useEffect, useId, useRef, useState } from 'react'
-import { Button } from '../components/ui'
+import { Button, LeaderRow } from '../components/ui'
 import { formatBytes, formatCount } from '../lib/format'
 import { type NodeEntry, type ScanId, getAncestors } from '../lib/ipc'
 import type { Os } from '../useOs'
@@ -145,10 +145,9 @@ export function TrashDialog({
       ? ''
       : entry.kind === 'dir'
         ? t('trash.folder', {
-            size: formatBytes(entry.allocated, locale),
             files: t('browse.fileCount', { n: formatCount(entry.files, locale), count: entry.files }),
           })
-        : t('trash.file', { size: formatBytes(entry.allocated, locale) })
+        : t('trash.file')
 
   return (
     <dialog
@@ -156,19 +155,24 @@ export function TrashDialog({
       aria-labelledby={titleId}
       aria-describedby={detailId}
       onCancel={cancel}
-      className="m-auto w-[calc(100%-2rem)] max-w-104 rounded-panel border border-hairline bg-card p-6 text-ink backdrop:bg-deepest/40"
+      className="m-auto w-[calc(100%-2rem)] max-w-104 rounded-panel border border-dialog-edge bg-card p-6 text-ink shadow-dialog backdrop:bg-deepest/40"
     >
       <h2 id={titleId} className="text-strong font-medium break-words">
         {t('trash.title', { name: target.name })}
       </h2>
-      <div id={detailId} className="mt-2 flex flex-col gap-1 text-body text-ink-2">
-        <p className="min-h-5 font-mono tabular-nums">{detail}</p>
-        <p>{t('trash.undo')}</p>
+      <div id={detailId} className="mt-2 flex flex-col text-body text-ink-2">
+        <p className="min-h-5 tabular-nums">{detail}</p>
+        {/* The döküm's line, once: what this move gives back. */}
+        <p className="mt-4 min-h-5 text-ink">
+          {entry && <LeaderRow name={t('trash.space')} value={formatBytes(entry.allocated, locale)} strong />}
+        </p>
+        <p className="mt-4">{t('trash.undo')}</p>
       </div>
       <div className="mt-6 flex flex-wrap justify-end gap-2">
         {/* First in the dialog, so focus lands on the safe choice. */}
         <Button onClick={onCancel} disabled={working} autoFocus>
           {t('trash.cancel')}
+          <Kbd>Esc</Kbd>
         </Button>
         <Button variant="primary" onClick={onConfirm} disabled={working} aria-busy={working}>
           {working ? t('trash.working') : t('trash.confirm')}
