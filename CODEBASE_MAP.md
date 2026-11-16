@@ -40,7 +40,7 @@ Existing tools are platform-specific, slow on large disks, or unsafe when deleti
 │   └── cleany-cli/            # `cleany` CLI (bench + headless scan)
 ├── src-tauri/                 # Tauri shell: commands, capabilities, bundle config
 ├── ui/                        # React frontend (design kit lives here)
-├── assets/                    # brand: icon.svg = the main logo (rounded badge, ≥48px), icon-small.svg (≤32px), logo{,-dark,-mono}.svg (bare mark, one-colour use), icon-macos{,-small}.svg (824 plate on 1024, Apple grid; feeds .icns + icon.png); not `tauri icon`
+├── assets/                    # brand: icon.svg = the main logo (rounded badge, every size incl. favicon), logo{,-dark,-mono}.svg (bare mark, one-colour use), icon-macos.svg (824 plate on 1024, Apple grid; feeds .icns + icon.png); not `tauri icon`
 ├── docs/PLAN.md               # full plan & milestones
 └── .github/workflows/ci.yml   # 3-OS CI
 ```
