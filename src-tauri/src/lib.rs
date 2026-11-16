@@ -2,6 +2,7 @@
 
 mod access;
 mod actions;
+mod deletion_log;
 mod session;
 mod volumes;
 
@@ -9,6 +10,7 @@ use std::path::PathBuf;
 
 use cleany_core::ScanOptions;
 use serde::Serialize;
+use tauri::Manager;
 use tauri::ipc::Channel;
 
 use access::{AccessError, DiskAccess};
@@ -150,14 +152,21 @@ fn get_path(
 }
 
 /// Moves the nodes to the OS trash and reports what happened to each. The
-/// UI confirms first; this command never asks.
+/// UI confirms first; this command never asks. Every attempt is also written
+/// to the deletion log in the app's log folder.
 #[tauri::command(async)]
 fn trash_nodes(
+    app: tauri::AppHandle,
     sessions: tauri::State<'_, Sessions>,
     scan: ScanId,
     nodes: Vec<u32>,
 ) -> Result<TrashReport, ActionError> {
-    actions::trash(&sessions, scan, &nodes)
+    let log_dir = app
+        .path()
+        .app_log_dir()
+        .inspect_err(|e| eprintln!("cleany: deletion log: no log folder: {e}"))
+        .ok();
+    actions::trash(&sessions, scan, &nodes, log_dir.as_deref())
 }
 
 /// Best-effort macOS Full Disk Access status; `notApplicable` elsewhere.
