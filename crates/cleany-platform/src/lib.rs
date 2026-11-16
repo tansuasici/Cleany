@@ -3,6 +3,7 @@
 //! come later (M7+).
 
 pub mod meta;
+mod protected;
 pub mod shell;
 pub mod trash;
 pub mod volumes;

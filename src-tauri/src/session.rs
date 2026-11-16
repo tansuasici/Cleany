@@ -361,8 +361,9 @@ pub enum TrashOutcome {
     /// It no longer existed on disk.
     Gone,
     /// Cleany never trashes it: the scan root, a filesystem root, the home
-    /// folder or a folder above it, a mount point, a cloud placeholder or a
-    /// folder holding one.
+    /// folder or a folder above it, a mount point, an OS folder (`/System`,
+    /// `/usr`, `C:\Windows`, `~/Library`…), a cloud placeholder or a folder
+    /// holding one.
     Protected,
     /// The OS did not move it, or it changed kind since the scan.
     Failed {
@@ -407,6 +408,20 @@ pub struct TrashReport {
     /// The root with its new totals, or `None` when a newer scan replaced
     /// this one meanwhile (the new tree is then left alone).
     pub root: Option<NodeEntry>,
+}
+
+/// One trash attempt as the deletion log records it: every handled item,
+/// protected ones included.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Deletion {
+    /// Full path, when the tree could build it.
+    pub path: Option<PathBuf>,
+    /// Kind the scan saw.
+    pub kind: NodeKind,
+    /// Size the scan saw.
+    pub freed: Freed,
+    /// What happened to it.
+    pub outcome: TrashOutcome,
 }
 
 /// One item to trash, collected under the lock.
@@ -809,6 +824,8 @@ impl Sessions {
     ///
     /// The lock is not held while `mover` runs. If a newer scan replaced this
     /// one meanwhile, the report still comes back but no tree is changed.
+    /// Next to the report comes one [`Deletion`] per reported item, for the
+    /// deletion log.
     ///
     /// # Errors
     /// [`SessionError::StaleScan`], [`SessionError::NotReady`], or
@@ -819,7 +836,7 @@ impl Sessions {
         id: ScanId,
         nodes: &[u32],
         mut mover: impl FnMut(&Path, NodeKind, &Path) -> TrashOutcome,
-    ) -> Result<TrashReport, SessionError> {
+    ) -> Result<(TrashReport, Vec<Deletion>), SessionError> {
         let (root_path, mut plan) = {
             let mut state = lock(&self.state);
             let tree = &state.finished_mut(id)?.tree;
@@ -844,6 +861,7 @@ impl Sessions {
             trashed: 0,
             root: None,
         };
+        let mut deletions = Vec::with_capacity(plan.len());
         for p in plan {
             let outcome = p.outcome.unwrap_or(TrashOutcome::Protected);
             let gone_from_disk = matches!(outcome, TrashOutcome::Trashed | TrashOutcome::Gone);
@@ -860,6 +878,12 @@ impl Sessions {
                     report.freed.allocated += p.freed.allocated;
                 }
             }
+            deletions.push(Deletion {
+                path: p.path,
+                kind: p.kind,
+                freed: p.freed,
+                outcome: outcome.clone(),
+            });
             report.items.push(TrashItem {
                 node: p.node,
                 name: p.name,
@@ -870,7 +894,7 @@ impl Sessions {
             f.sorted = None;
             report.root = entry(&f.tree, f.tree.root());
         }
-        Ok(report)
+        Ok((report, deletions))
     }
 }
 
@@ -1074,10 +1098,10 @@ fn millis(d: std::time::Duration) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        CancelToken, ChildrenPage, EntryKind, Finished, MAX_SUNBURST_DEPTH, MAX_TREEMAP_DEPTH,
-        NodeEntry, RingArc, ScanEvent, ScanId, ScanIssue, ScanStats, ScanSummary, SessionError,
-        Sessions, SortKey, SortOrder, State, SunburstSlice, TrashItem, TrashOutcome, TrashReport,
-        TreemapCell, TreemapSlice, lock,
+        CancelToken, ChildrenPage, Deletion, EntryKind, Finished, Freed, MAX_SUNBURST_DEPTH,
+        MAX_TREEMAP_DEPTH, NodeEntry, RingArc, ScanEvent, ScanId, ScanIssue, ScanStats,
+        ScanSummary, SessionError, Sessions, SortKey, SortOrder, State, SunburstSlice, TrashItem,
+        TrashOutcome, TrashReport, TreemapCell, TreemapSlice, lock,
     };
     use cleany_core::{EntryInfo, NodeFlags, NodeKind, ScanOptions, Size, Tree, TreeBuilder};
     use std::ffi::OsStr;
@@ -1511,7 +1535,8 @@ mod tests {
         let mut calls = Vec::new();
         let report = s
             .trash(id, &[c], fake(&mut calls, TrashOutcome::Trashed))
-            .unwrap();
+            .unwrap()
+            .0;
         assert_eq!(calls, [PathBuf::from("/r/C")]);
         assert_eq!(report.trashed, 1);
         assert_eq!(report.freed.allocated, 200);
@@ -1542,7 +1567,8 @@ mod tests {
         let mut calls = Vec::new();
         let report = s
             .trash(id, &[x, c, c], fake(&mut calls, TrashOutcome::Trashed))
-            .unwrap();
+            .unwrap()
+            .0;
         assert_eq!(calls, [PathBuf::from("/r/C")]);
         assert_eq!(report.items.len(), 1);
         assert_eq!(report.items[0].node, c);
@@ -1572,21 +1598,24 @@ mod tests {
                 &[0, cloud, doc],
                 fake(&mut calls, TrashOutcome::Trashed),
             )
-            .unwrap();
+            .unwrap()
+            .0;
         // The root covers the rest, so only it is reported.
         assert!(calls.is_empty());
         assert_eq!(report.items.len(), 1);
         assert_eq!(report.items[0].outcome, TrashOutcome::Protected);
         let report = s
             .trash(id, &[cloud, doc], fake(&mut calls, TrashOutcome::Trashed))
-            .unwrap();
+            .unwrap()
+            .0;
         assert!(calls.is_empty());
         assert_eq!(report.items[0].outcome, TrashOutcome::Protected);
         assert_eq!(report.trashed, 0);
         // A plain file inside can still go.
         let report = s
             .trash(id, &[local], fake(&mut calls, TrashOutcome::Trashed))
-            .unwrap();
+            .unwrap()
+            .0;
         assert_eq!(calls, [PathBuf::from("/r/cloud/local")]);
         assert_eq!(report.trashed, 1);
     }
@@ -1598,7 +1627,8 @@ mod tests {
         let mut calls = Vec::new();
         let report = s
             .trash(id, &[a], fake(&mut calls, TrashOutcome::Gone))
-            .unwrap();
+            .unwrap()
+            .0;
         assert_eq!(report.items[0].outcome, TrashOutcome::Gone);
         assert_eq!((report.trashed, report.freed.allocated), (0, 0));
         // It is not on disk, so it leaves the tree too.
@@ -1614,7 +1644,10 @@ mod tests {
         let failed = TrashOutcome::Failed {
             message: "denied".to_owned(),
         };
-        let report = s.trash(id, &[a], fake(&mut calls, failed.clone())).unwrap();
+        let report = s
+            .trash(id, &[a], fake(&mut calls, failed.clone()))
+            .unwrap()
+            .0;
         assert_eq!(report.items[0].outcome, failed);
         assert_eq!(report.root.unwrap().allocated, 600);
         assert_eq!(s.path(id, a), Ok(PathBuf::from("/r/a")));
@@ -1632,6 +1665,61 @@ mod tests {
     }
 
     #[test]
+    fn trash_returns_one_deletion_per_reported_item() {
+        let (s, id) = done(small_tree());
+        let a = child(&s, id, 0, "a");
+        let c = child(&s, id, 0, "C");
+        let (report, deletions) = s.trash(id, &[0], |_, _, _| TrashOutcome::Trashed).unwrap();
+        // The root is protected and covers the rest.
+        assert_eq!(report.items.len(), 1);
+        assert_eq!(
+            deletions,
+            [Deletion {
+                path: Some(PathBuf::from("/r")),
+                kind: NodeKind::Dir,
+                freed: Freed {
+                    logical: 300,
+                    allocated: 600,
+                },
+                outcome: TrashOutcome::Protected,
+            }]
+        );
+        let failed = TrashOutcome::Failed {
+            message: "denied".to_owned(),
+        };
+        let (_, deletions) = s
+            .trash(id, &[a, c], |path, _, _| {
+                if path.ends_with("a") {
+                    failed.clone()
+                } else {
+                    TrashOutcome::Trashed
+                }
+            })
+            .unwrap();
+        let got: Vec<_> = deletions
+            .iter()
+            .map(|d| (d.path.clone(), d.kind, d.freed.allocated, d.outcome.clone()))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                (
+                    Some(PathBuf::from("/r/a")),
+                    NodeKind::File,
+                    100,
+                    failed.clone()
+                ),
+                (
+                    Some(PathBuf::from("/r/C")),
+                    NodeKind::Dir,
+                    200,
+                    TrashOutcome::Trashed
+                ),
+            ]
+        );
+    }
+
+    #[test]
     fn trash_during_a_new_scan_leaves_the_new_tree_alone() {
         let (s, id) = done(small_tree());
         let a = child(&s, id, 0, "a");
@@ -1646,7 +1734,8 @@ mod tests {
                 };
                 TrashOutcome::Trashed
             })
-            .unwrap();
+            .unwrap()
+            .0;
         assert_eq!(report.trashed, 1);
         assert_eq!(report.freed.allocated, 100);
         assert_eq!(report.root, None);

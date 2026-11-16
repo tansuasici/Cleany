@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use sysinfo::Disks;
 
 use crate::meta::read_meta;
+use crate::protected::{Protected, system_rules};
 
 /// Why an item could not be moved to the trash.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -71,26 +72,65 @@ fn context() -> trash::TrashContext {
     trash::TrashContext::new()
 }
 
-/// Whether Cleany refuses to trash `path`: the scan root, a filesystem root,
-/// the home folder or any folder above it, or a folder that is or contains a
-/// mount point. Paths are compared by identity, so `/var` and `/private/var`
-/// or a symlinked home are the same folder.
-#[must_use]
-pub fn is_protected(path: &Path, scan_root: &Path) -> bool {
-    let mounts: Vec<PathBuf> = Disks::new_with_refreshed_list()
-        .list()
-        .iter()
-        .map(|d| d.mount_point().to_path_buf())
-        .collect();
-    is_protected_with(path, scan_root, std::env::home_dir().as_deref(), &mounts)
+/// What Cleany refuses to trash, gathered once per request: the home folder,
+/// the mount points and the OS folders listed for this platform.
+#[derive(Debug)]
+pub struct Protection {
+    home: Option<PathBuf>,
+    mounts: Vec<PathBuf>,
+    system: Protected,
 }
 
-/// [`is_protected`] with the home folder and mount list given, for tests.
+impl Protection {
+    /// Reads the home folder, the mounted disks and the OS folder list.
+    #[must_use]
+    pub fn current() -> Self {
+        let home = std::env::home_dir();
+        let mounts = Disks::new_with_refreshed_list()
+            .list()
+            .iter()
+            .map(|d| d.mount_point().to_path_buf())
+            .collect();
+        let system = Protected::resolve(&system_rules(home.as_deref()));
+        Self {
+            home,
+            mounts,
+            system,
+        }
+    }
+
+    /// Whether Cleany refuses to trash `path`: the scan root, a filesystem
+    /// root, the home folder or any folder above it, a folder that is or
+    /// contains a mount point, or an OS folder (`/System`, `/usr`,
+    /// `C:\Windows`, `~/Library`…; some only as the folder itself, see the
+    /// list in `protected.rs`). Paths are compared by identity, so `/var` and
+    /// `/private/var` or a symlinked home are the same folder.
+    #[must_use]
+    pub fn covers(&self, path: &Path, scan_root: &Path) -> bool {
+        is_protected_with(
+            path,
+            scan_root,
+            self.home.as_deref(),
+            &self.mounts,
+            &self.system,
+        )
+    }
+}
+
+/// [`Protection::covers`] for a single path; build a [`Protection`] once for
+/// several.
+#[must_use]
+pub fn is_protected(path: &Path, scan_root: &Path) -> bool {
+    Protection::current().covers(path, scan_root)
+}
+
+/// [`Protection::covers`] with every input given, for tests.
 fn is_protected_with(
     path: &Path,
     scan_root: &Path,
     home: Option<&Path>,
     mounts: &[PathBuf],
+    system: &Protected,
 ) -> bool {
     if path.parent().is_none() || same_entry(path, scan_root) {
         return true;
@@ -98,6 +138,10 @@ fn is_protected_with(
     if let Some(home) = home
         && home.ancestors().any(|a| same_entry(path, a))
     {
+        return true;
+    }
+    // Before the symlink rule: a listed folder that is a link stays.
+    if system.covers(path) {
         return true;
     }
     // A symlink is trashed as the link; what it points at stays.
@@ -139,8 +183,14 @@ fn same_entry(a: &Path, b: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{TrashError, is_protected_with, move_to_trash};
+    use crate::protected::Protected;
     use std::fs;
     use std::path::{Path, PathBuf};
+
+    /// [`is_protected_with`] with no OS folder list.
+    fn check(path: &Path, root: &Path, home: Option<&Path>, mounts: &[PathBuf]) -> bool {
+        is_protected_with(path, root, home, mounts, &Protected::default())
+    }
 
     fn scratch(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("cleany-trash-{name}-{}", std::process::id()));
@@ -158,29 +208,14 @@ mod tests {
         fs::create_dir_all(&other).unwrap();
         let none: &[PathBuf] = &[];
 
-        assert!(is_protected_with(Path::new("/"), &other, Some(&home), none));
-        assert!(is_protected_with(&other, &other, Some(&home), none));
-        assert!(is_protected_with(&home, &other, Some(&home), none));
-        assert!(is_protected_with(
-            &dir.join("home"),
-            &other,
-            Some(&home),
-            none
-        ));
-        assert!(is_protected_with(&dir, &other, Some(&home), none));
-        assert!(!is_protected_with(
-            &home.join("Downloads"),
-            &other,
-            Some(&home),
-            none
-        ));
+        assert!(check(Path::new("/"), &other, Some(&home), none));
+        assert!(check(&other, &other, Some(&home), none));
+        assert!(check(&home, &other, Some(&home), none));
+        assert!(check(&dir.join("home"), &other, Some(&home), none));
+        assert!(check(&dir, &other, Some(&home), none));
+        assert!(!check(&home.join("Downloads"), &other, Some(&home), none));
         // A trailing `.` is the same folder.
-        assert!(is_protected_with(
-            &home.join("."),
-            &other,
-            Some(&home),
-            none
-        ));
+        assert!(check(&home.join("."), &other, Some(&home), none));
         fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -193,9 +228,9 @@ mod tests {
         let mounts = vec![vol.clone()];
         let root = Path::new("/nonexistent-root");
 
-        assert!(is_protected_with(&vol, root, None, &mounts));
-        assert!(is_protected_with(&dir.join("Volumes"), root, None, &mounts));
-        assert!(!is_protected_with(&dir.join("plain"), root, None, &mounts));
+        assert!(check(&vol, root, None, &mounts));
+        assert!(check(&dir.join("Volumes"), root, None, &mounts));
+        assert!(!check(&dir.join("plain"), root, None, &mounts));
         fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -215,16 +250,50 @@ mod tests {
         // The link itself is not its target.
         assert!(!same_entry(&link, &real));
         // Home reached through a link still protects the real folder.
-        assert!(is_protected_with(
-            &real,
-            Path::new("/x"),
-            Some(&link.join(".")),
-            &[]
-        ));
+        assert!(check(&real, Path::new("/x"), Some(&link.join(".")), &[]));
         // A link pointing at a mount holder is just a link.
         let mounts = vec![real.join("inner")];
-        assert!(!is_protected_with(&link, Path::new("/x"), None, &mounts));
-        assert!(is_protected_with(&real, Path::new("/x"), None, &mounts));
+        assert!(!check(&link, Path::new("/x"), None, &mounts));
+        assert!(check(&real, Path::new("/x"), None, &mounts));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn listed_links_stay_and_the_list_applies() {
+        use crate::protected::{Reach, Rule};
+
+        let dir = scratch("listed");
+        fs::create_dir_all(dir.join("usr/bin")).unwrap();
+        fs::create_dir_all(dir.join("free")).unwrap();
+        std::os::unix::fs::symlink(dir.join("usr/bin"), dir.join("bin")).unwrap();
+        let system = Protected::resolve(&[
+            Rule::Protect(dir.join("usr"), Reach::Subtree),
+            Rule::Protect(dir.join("bin"), Reach::Subtree),
+        ]);
+        let root = Path::new("/x");
+        // A listed link is caught before the "links are just links" rule.
+        assert!(is_protected_with(
+            &dir.join("bin"),
+            root,
+            None,
+            &[],
+            &system
+        ));
+        assert!(is_protected_with(
+            &dir.join("usr/bin"),
+            root,
+            None,
+            &[],
+            &system
+        ));
+        assert!(!is_protected_with(
+            &dir.join("free"),
+            root,
+            None,
+            &[],
+            &system
+        ));
         fs::remove_dir_all(&dir).unwrap();
     }
 

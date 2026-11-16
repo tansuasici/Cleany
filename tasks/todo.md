@@ -9,7 +9,137 @@ Give the task you are actively working on an `h3` heading under **In Progress** 
 
 ## In Progress
 
-### M4 — Çöpe taşı (varsayılan) + sonuç raporu (Notion #30)
+### M4 — Korumalı yollar listesi + silme logu (Notion #32)
+
+**Durum (2026-11-16)**: Uygulandı. fmt, clippy (macOS/Windows/Linux hedefleri), check, test, release build ve UI typecheck/lint/build geçti. Gerçek macOS'ta liste geçici bir programla doğrulandı. Uygulama içinden çöpe taşıma ve log dosyası elle denenmedi. Commit ve PR bekleniyor.
+
+**Hedef**:
+- İşletim sisteminin kendi klasörleri hiçbir zaman çöpe taşınamaz. Örnekler: `/System`, `/usr`, `C:\Windows`, `C:\Program Files`, ev dizininin kökü.
+- Cleany'nin yaptığı her silme girişimi yerel bir log dosyasına yazılır: ne silindi, ne zaman, nereye ve sonucu ne oldu.
+- Notion kartı boş; kabul ölçütü docs/PLAN.md:128 ve :130.
+
+**Bağlam**:
+- docs/PLAN.md:128 (korumalı yollar), :130 (silme logu), :185 ("Yanlış silme → … korumalı yollar, onay, log").
+- #30'da gelen asgari koruma:
+  - `cleany-platform::trash::is_protected_with` şunları korur:
+    - taramanın kökü;
+    - dosya sistemi kökü;
+    - ev dizini ve atası;
+    - bağlama noktaları.
+  - `session::plan_trash` kökü ve bulut yer tutucularını korur.
+  - `actions::move_one` sırası şöyledir: önce varlık kontrolü, sonra `is_protected`, sonra tür kontrolü, en son `move_to_trash`.
+- Dal: `feat/m4-protected-log`.
+
+#### Tasarım kararları — korumalı yollar
+- **Liste `cleany-platform::trash` içinde, işletim sistemine göre (`cfg`) tanımlanır.** Her girdi üç ilişkiden birini taşır:
+  - **Kendisi** (`Itself`): Yalnız klasörün kendisi korunur. İçindekiler serbesttir.
+  - **Altı** (`Subtree`): Klasörün kendisi ve altındaki her şey korunur.
+  - **Üstü** (her girdi için geçerli): Korumalı bir girdiyi içeren her klasör de korunur. Örneğin `/private`'ı taşımak `/private/etc`'yi de götürürdü.
+
+  Önerilen liste:
+
+  | OS | Altı (tamamı kilitli) | Yalnız kendisi |
+  |---|---|---|
+  | macOS | `/System`, `/bin`, `/sbin`, `/usr` (istisna: `/usr/local` altı serbest), `/private/etc`, `/private/var/db`, `/Library/Apple` | `/Applications`, `/Library`, `/Users`, `/Volumes`, `/private`, `/private/var`, `/opt`, `/usr/local`; ev altında `Library`, `Desktop`, `Documents`, `Downloads`, `Movies`, `Music`, `Pictures` |
+  | Linux | `/bin`, `/sbin`, `/lib`, `/lib32`, `/lib64`, `/usr` (istisna: `/usr/local` altı), `/etc`, `/boot`, `/proc`, `/sys`, `/dev`, `/run` | `/home`, `/root`, `/var`, `/opt`, `/srv`, `/mnt`, `/media`, `/tmp`, `/usr/local`; ev altında `.config`, `.local`, XDG klasörleri |
+  | Windows | `%SystemRoot%` (`C:\Windows`), `%ProgramFiles%`, `%ProgramFiles(x86)%` | `%ProgramData%`, `C:\Users`, ev altında `AppData`, `Desktop`, `Documents`, `Downloads` |
+
+  - `/Volumes`, `C:\Users` ve `/Applications` "altı" olamaz: dış diskleri, uygulamaları ve ev dizinini kilitlerdi.
+  - Windows'ta sistem sürücüsü sabit `C:` yazılmaz. Önce ortam değişkenleri okunur (`SystemRoot`, `ProgramFiles`…). Değişken yoksa `SystemDrive` kullanılır, o da yoksa `C:` varsayılır.
+- **Eşleştirme kimlikle yapılır, metinle değil.**
+  - Her girdi bir kez `read_meta` ile `(dev, file_id)` çiftine çevrilir; var olmayan girdiler atlanır.
+  - Öğe için kendisi ve atalarının kimlikleri yürünerek karşılaştırılır.
+  - Bu yöntemle büyük/küçük harf farkı (APFS, NTFS), Windows'taki `\\?\` öneki ve `/etc → /private/etc` gibi sembolik bağlantı yazımları sorun olmaktan çıkar.
+  - Kimliği okunamayan yerlerde (Windows'ta `file_id` 0 olabilir) `canonicalize` ile yol karşılaştırmasına düşülür. Bu, var olan `same_entry` deseniyle aynıdır.
+- **Kontrol sırası:** Liste kontrolü, `is_protected_with` içindeki "sembolik bağlantı → `false`" erken dönüşünden **önce** yapılır.
+  - Öğenin kendisi bir girdiyse ya da bir girdinin altındaysa, `symlink_metadata` ile bağlantının kendisinin kimliği kontrol edilir.
+  - Böylece listede bulunan, ama kendisi sembolik bağlantı olan bir yol (merged-usr Linux'ta `/bin`) yine korunur.
+  - Bağlantının gösterdiği yer takip edilmez. `~/x → /usr` gibi bir bağlantı taşınabilir; çöpe yalnız bağlantı gider.
+- **Test edilebilirlik:** Liste, `home` ve `mounts` gibi parametre olarak verilir (`is_protected_with(path, root, home, mounts, list)`). Testler geçici klasörlerle sahte bir liste kurar. Gerçek liste `is_protected` içinde bir kez kurulur.
+- `TrashOutcome::Protected` doc yorumu ve UI metni güncellenir. Örnek TR metni: "… sistem klasörleri, uygulamalar klasörü, diskler, ana klasör ve üstü …". EN metni de aynı biçimde güncellenir.
+
+#### Tasarım kararları — silme logu
+- **Yer:** `app.path().app_log_dir()/deletions.jsonl`. macOS'ta bu `~/Library/Logs/com.tansuasici.cleany/deletions.jsonl` olur.
+  - Yol Rust tarafında `AppHandle` ile çözülür.
+  - Capability, `tauri.conf.json` ya da eklenti değişikliği gerekmez. Bu, uygulama sırasında doğrulanacak.
+- **Biçim:** JSON Lines; her öğe için bir satır:
+  ```json
+  {"time":"2026-11-16T14:03:22Z","action":"trash","path":"/Users/x/a","kind":"dir","outcome":"trashed","to":"osTrash","logical":123,"allocated":4096,"message":null}
+  ```
+  - `action`: bu PR'da `trash`. #31 aynı biçimi `delete` değeriyle kullanır.
+  - `to` ("nereye"): `osTrash`. İşletim sistemi çöpteki tam konumu döndürmediği için hedef konum değil, hedef türü yazılır. #31'de bu değer `permanent` olur.
+  - Her sonuç yazılır: `trashed`, `gone`, `protected`, `failed`. Engellenen girişimler de iz bırakır.
+- **Zaman damgası bağımlılıksız (önerilen):** `SystemTime` kullanılır ve UTC RFC 3339'a ~20 satırlık bir fonksiyonla çevrilir (Howard Hinnant'ın `civil_from_days` algoritması). Alternatif `time` crate'idir; bu yeni bağımlılık olur ve onay ister.
+- **Kayıtların üretildiği yer:**
+  - `Sessions::trash` raporla birlikte iç kayıtlar da döndürür: `(TrashReport, Vec<Deletion { path, kind, freed, outcome }>)`.
+  - Kök ve yer tutucu öğeleri `plan_trash`'te `Protected` olur ve `mover`'a hiç ulaşmaz. Kayıtlar `Planned`'dan üretildiği için bu öğeler de loglanır.
+  - `TrashItem` ve `TrashReport` değişmez. **IPC değişikliği yoktur.**
+  - `actions::trash` kayıtları `deletion_log::append` ile yazar.
+- **Yazma hatası:** Taşıma zaten gerçekleşmiştir, bu yüzden hata olarak dönmez ve panik oluşturmaz. `eprintln!("cleany: deletion log: …")` ile bildirilir. UI'da gösterilmez; gösterilmesi IPC değişikliği gerektirirdi.
+- **Döndürme:** Dosya 5 MB'ı aşarsa `deletions.1.jsonl` adını alır. Tek yedek tutulur, eski yedeğin üzerine yazılır.
+- **"Logu göster" düğmesi bu PR'da yok (önerilen).** Yeni IPC ve UI gerektirir; Not Now'a yazılır.
+
+#### Onay gerekenler
+- Yeni bağımlılık yok; `Cargo.toml` değişmez.
+- IPC değişmez; `ipc.ts` değişmez.
+- `tauri.conf.json`, capability ve CI dosyalarına dokunulmaz.
+- Genel API'de iki değişiklik var:
+  - `cleany-platform::trash::is_protected` imzası aynı kalır, ama davranışı genişler: liste eklenir.
+  - `Sessions::trash` dönüş tipi `(TrashReport, Vec<Deletion>)` olur. Bu tip uygulama crate'inin içindedir; IPC'ye yansımaz.
+
+#### Testler (önce yazılır)
+- **platform `trash::tests`**, sahte listeyle geçici klasörlerde:
+  - "kendisi" girdisi korunur, çocuğu serbesttir;
+  - "altı" girdisinin torunu korunur;
+  - `/usr/local` benzeri istisnanın altı serbesttir;
+  - bir girdinin atası korunur;
+  - listede olan bir sembolik bağlantı korunur;
+  - korumalı klasörü gösteren bağlantı serbesttir;
+  - macOS'ta büyük/küçük harf farklı yazım korunur.
+- **platform, gerçek liste:**
+  - macOS'ta `/System/Library`, `/usr/bin`, `/Applications`, `/etc` korunur;
+  - Linux'ta `/usr/bin` ve `/etc` korunur;
+  - Windows'ta `%SystemRoot%\System32` korunur.
+- **`deletion_log::tests`:**
+  - RFC 3339 dönüşümü: 0 → `1970-01-01T00:00:00Z`, artık gün `2024-02-29` ve yıl sonu;
+  - iki çağrıda satırlar eklenir;
+  - her satır `serde_json` ile geri okunur;
+  - 5 MB sınırında döndürme yapılır;
+  - yazılamayan klasörde `Err` döner, panik olmaz.
+- **`session::tests`:** kök, yer tutucu, `trashed` ve `failed` öğelerinin hepsi kayıt üretir; yollar ve boyutlar doğrudur.
+
+#### Dosyalar
+- `crates/cleany-platform/src/trash.rs`: liste ve eşleştirme. Büyürse `protected.rs` adlı bir alt modüle ayrılır.
+- `src-tauri/src/deletion_log.rs` (yeni), `actions.rs`, `session.rs`, `lib.rs` (`trash_nodes` `AppHandle` alır).
+- `ui/src/lib/i18n.ts`: `trash.protected` metni (TR ve EN).
+- `CODEBASE_MAP.md`.
+
+#### Doğrulama
+- Standart sıra uygulanır: `fmt --check`, `clippy --all-targets -D warnings`, `check`, `test`, `build --release`.
+- **Çapraz hedef clippy** de çalıştırılır: `--target x86_64-pc-windows-msvc` ve `x86_64-unknown-linux-gnu`. `cfg` listeleri #30'daki Windows kırılmasıyla aynı riski taşır.
+- Uygulamada gerçek deneme:
+  - Önce SIP korumalı bir hedef (`/usr` ya da `/System` altındaki bir öğe) taranır ve çöpe taşınmaya çalışılır. Bir hata olsa bile SIP silmeyi engeller.
+    - Beklenen sonuç `protected` olmalı, `failed` değil.
+    - Log'da `"outcome":"protected"` satırı bulunmalı.
+  - Ardından `~/cleany-trash-test` içindeki bir dosya taşınır.
+    - Sonuç `trashed` olmalı ve log'da ilgili satır bulunmalı.
+
+#### Açık sorular (önerilen varsayılanlar yukarıda)
+1. Liste kapsamı tablodaki gibi mi? Özellikle ev altındaki standart klasörlerin (`Documents`, `Downloads`…) **kendileri**nin korunması.
+2. Zaman damgası bağımlılıksız mı yazılsın, yoksa `time` crate'i mi kullanılsın?
+3. "Logu göster" düğmesi sonraya mı bırakılsın?
+
+#### Riskler
+- Liste fazla geniş olursa kullanıcıyı engeller, fazla dar olursa korumaz. `/Library` ve `~/Library` yalnız kendileri korunduğu için içlerindeki önbellekler temizlenebilir kalır.
+- Kimlik okuma maliyeti, girdi sayısı (~25) kadar `stat` çağrısıdır ve her taşıma isteğinde bir kez yapılır. Sepetteki (#33) çok öğeli isteklerde de liste bir kez kurulur.
+
+## Up Next
+
+---
+
+## Done
+
+### M4 — Çöpe taşı (varsayılan) + sonuç raporu (Notion #30) ✅ 2026-11-16 (#26 merged)
 
 **Hedef**: Browse'da seçili öğe çöpe taşınabilsin: macOS'ta Çöp Sepeti, Windows'ta Geri Dönüşüm Kutusu, Linux'ta freedesktop çöpü. Taşımadan önce bir onay penceresi açılır. İşlem bitince bir sonuç raporu gösterilir: ne taşındı, ne kadar alan boşaldı, ne başarısız oldu. Ağaç ve boyutlar yeniden tarama gerekmeden güncellenir. Notion kartı boş; kabul ölçütü bu satır.
 
@@ -152,13 +282,7 @@ Doğrulama:
   - Gezilen klasörün kendisi çöpe gidince ataya (`tansuasici`) dönüldü.
   - Üçü de Finder Çöp'ünde, `~/cleany-trash-test` diskte yok.
   - Not: arka plan otomasyonu `aria-haspopup="dialog"` butonuna basamıyor, enjekte tuşlar da web görünümüne ulaşmıyor; deneme ön planda yapıldı.
-- **Kalan:** yok (commit/PR bekliyor).
-
-## Up Next
-
----
-
-## Done
+- **Kalan:** yok.
 
 ### M4 — Göster / aç / yolu kopyala (Notion #29) ✅ 2026-11-15 (#23 merged)
 
@@ -623,4 +747,5 @@ _2026-11-14: Plan, bağımlılıklar ve Windows **A seçeneği** onaylandı._
 Parked scope — deferred work, revisit when prioritized. (CLAUDE.md → Scope Discipline routes out-of-scope items here.)
 
 - **Macintosh HD toplamı diski aşıyor** (2026-11-16, #30 denemesi sırasında): tarama 1,6 TB gösterdi (System 833 GB, Users 626 GB), disk ise 953 GB dolu; ilerleme çubuğu da "yaklaşık 953 GB" tahminini geçti. `cross_mounts: false` ve "20 diğer birim dışarıda" olmasına rağmen Data birimi `/System/Volumes/Data` ve firmlink'ler üzerinden iki kez sayılıyor olabilir. Ayrı hata; #30 kapsamı dışında.
+- **Silme logunu uygulamadan göster** (#32'den ertelendi): "Logu göster" düğmesi `deletions.jsonl` dosyasını dosya yöneticisinde açabilir; yeni IPC komutu gerektirdiği için #32 kapsamı dışında bırakıldı.
 - **Döküm "Aç →" dokunmatikte görünmüyor** (#28 interface-check, Minor): `ui/src/screens/Summary.tsx:309` yalnızca hover/odakta görünür; Tailwind v4 `group-hover` `(hover: hover)` ile kapılı olduğundan dokunmatik ekranda tıklanabilir ama görünmez. Masaüstü uygulamasında pratik etkisi yok; dokunmatik/Linux tablet desteği gündeme gelirse `@media (hover: none)` altında sürekli göster.

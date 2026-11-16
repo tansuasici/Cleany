@@ -54,6 +54,8 @@ Existing tools are platform-specific, slow on large disks, or unsafe when deleti
 | `src-tauri/src/lib.rs` | Tauri commands (IPC surface) |
 | `ui/src/lib/ipc.ts` | Typed frontend wrapper for commands |
 | `crates/cleany-core/src/lib.rs` | Core data types |
+| `crates/cleany-platform/src/protected.rs` | Per-OS list of folders never trashed (`/System`, `C:\Windows`, `~/Library`…) |
+| `src-tauri/src/deletion_log.rs` | Deletion log: one JSON line per trash attempt, `deletions.jsonl` in the app log folder |
 
 ## Architecture
 
