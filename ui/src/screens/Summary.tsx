@@ -14,8 +14,11 @@ const NAME_CHARS = 44
 /** Below this share of the total a bar would be a speck, so none is drawn. */
 const MIN_BAR_SHARE = 0.005
 
-/** One grid for every döküm line: name ··· size | bar | share | open. */
-const LINE = 'grid grid-cols-[minmax(0,1fr)_7.5rem_3.5rem_3rem] items-baseline gap-x-4'
+/** One grid for every döküm line: name ··· size | bar | share | open (narrow: name | share | open, bar below). */
+const LINE =
+  'grid grid-cols-[minmax(0,1fr)_3rem_2.5rem] items-baseline gap-x-2 sm:grid-cols-[minmax(0,1fr)_7.5rem_3.5rem_3rem] sm:gap-x-4'
+/** Share sits after the name on narrow screens, after the bar from `sm` up; the bar drops under the name. */
+const SHARE_CELL = 'col-start-2 row-start-1 text-right sm:col-start-3'
 
 /** Moment 2: the end-of-scan döküm — items with their share, one subtotal, footnotes. */
 export function SummaryScreen({ screen }: Props) {
@@ -39,7 +42,7 @@ export function SummaryScreen({ screen }: Props) {
   return (
     <section
       aria-labelledby="summary-title"
-      className="mx-auto w-full max-w-156 px-8 py-10 min-[1100px]:grid min-[1100px]:max-w-240 min-[1100px]:grid-cols-[minmax(0,35rem)_17.5rem] min-[1100px]:gap-x-8"
+      className="mx-auto w-full max-w-156 px-4 py-10 sm:px-8 min-[1100px]:grid min-[1100px]:max-w-240 min-[1100px]:grid-cols-[minmax(0,35rem)_17.5rem] min-[1100px]:gap-x-8"
     >
       <header className="min-[1100px]:col-span-2">
         <h1 id="summary-title" className="text-title font-medium">
@@ -50,11 +53,10 @@ export function SummaryScreen({ screen }: Props) {
         )}
       </header>
 
-      <article className="mt-8 rounded-panel border border-hairline bg-card p-6">
+      <article className="mt-8 rounded-panel border border-hairline bg-card p-4 sm:p-6">
         <div className={`${LINE} text-secondary text-ink-2`}>
-          <h2 className="pl-5">{t('summary.items')}</h2>
-          <span />
-          <span className="text-right">{t('summary.share')}</span>
+          <h2 className="col-start-1 row-start-1 pl-5">{t('summary.items')}</h2>
+          <span className={SHARE_CELL}>{t('summary.share')}</span>
         </div>
         <div className="mt-3">
           {top.status === 'loading' && (
@@ -90,8 +92,9 @@ export function SummaryScreen({ screen }: Props) {
                   />
                 )}
               </ol>
-              <div className={`${LINE} mt-3 border-t border-ink pt-4`}>
-                <span className="pl-5">
+              <div aria-hidden className="mt-3 rule-total" />
+              <div className={`${LINE} pt-4`}>
+                <span className="col-span-full pl-5 sm:col-span-1">
                   <LeaderRow strong figure name={t('summary.sum')} value={bytes(root.allocated)} />
                 </span>
               </div>
@@ -223,7 +226,7 @@ function ItemRow({
 
   const cells = (
     <>
-      <span className={`flex min-w-0 items-baseline gap-1 ${depth > 0 ? 'pl-10' : canExpand ? '' : 'pl-5'}`}>
+      <span className={`col-start-1 row-start-1 flex min-w-0 items-baseline gap-1 ${depth > 0 ? 'pl-10' : canExpand ? '' : 'pl-5'}`}>
         {canExpand && (
           <span aria-hidden className="shrink-0 self-center text-ink-3">
             <span
@@ -239,8 +242,12 @@ function ItemRow({
           value={formatBytes(item.allocated, locale)}
         />
       </span>
-      <span className="self-center">{bar && <ShareBar ratio={max > 0 ? item.allocated / max : 0} accent={accent} />}</span>
-      <span className="text-right font-mono text-secondary text-ink-2 tabular-nums">
+      <span
+        className={`col-start-1 row-start-2 self-center sm:col-start-2 sm:row-start-1 ${depth > 0 ? 'pl-10' : 'pl-5'} sm:pl-0`}
+      >
+        {bar && <ShareBar ratio={max > 0 ? item.allocated / max : 0} accent={accent} />}
+      </span>
+      <span className={`${SHARE_CELL} text-secondary text-ink-2 tabular-nums`}>
         {formatShare(item.allocated, total, locale)}
       </span>
     </>
@@ -306,7 +313,7 @@ function OpenLink({ item, onOpen }: { item: NodeEntry; onOpen: () => void }) {
       type="button"
       onClick={onOpen}
       aria-label={t('summary.openLabel', { name: item.name })}
-      className="absolute top-1/2 right-2 flex min-h-6 w-12 -translate-y-1/2 items-center justify-end gap-0.5 rounded-tag text-secondary text-ink-2 opacity-0 transition-opacity duration-150 ease-out group-hover:opacity-100 hover:text-ink focus-visible:opacity-100 motion-reduce:transition-none"
+      className="absolute top-1/2 right-2 flex min-h-6 w-10 -translate-y-1/2 sm:w-12 items-center justify-end gap-0.5 rounded-tag text-secondary text-ink-2 opacity-0 transition-opacity duration-150 ease-out group-hover:opacity-100 hover:text-ink focus-visible:opacity-100 motion-reduce:transition-none"
     >
       {t('summary.open')}
       <ChevronIcon />
@@ -320,11 +327,10 @@ function OthersRow({ count, bytes, total, depth }: { count: number; bytes: numbe
   const size = Math.max(0, bytes)
   return (
     <li className={`${LINE} min-h-7 px-2 py-1 text-ink-2 ${depth > 0 ? 'text-secondary' : ''}`}>
-      <span className={depth > 0 ? 'pl-10' : 'pl-5'}>
+      <span className={`col-start-1 row-start-1 ${depth > 0 ? 'pl-10' : 'pl-5'}`}>
         <LeaderRow name={t('summary.others', { n: formatCount(count, locale), count })} value={formatBytes(size, locale)} />
       </span>
-      <span />
-      <span className="text-right font-mono text-secondary tabular-nums">{formatShare(size, total, locale)}</span>
+      <span className={`${SHARE_CELL} text-secondary tabular-nums`}>{formatShare(size, total, locale)}</span>
     </li>
   )
 }

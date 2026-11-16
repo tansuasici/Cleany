@@ -10,7 +10,7 @@ import {
 } from 'react'
 import { formatBytes, formatCount, formatShare } from '../lib/format'
 import { type NodeEntry, type ScanId, type TreemapCell, type TreemapSlice, getTreemap } from '../lib/ipc'
-import { type Box, fit, useBox, useScheme } from '../canvas'
+import { type Box, fit, hatch, rankTone, readRamp, useBox, useScheme } from '../canvas'
 import type { ActionTarget } from './useBrowseActions'
 import { useLater } from '../useLater'
 import { useT } from '../useT'
@@ -25,14 +25,15 @@ const LABEL_W = 80
 const LABEL_H = 48
 
 /*
- * DESIGN_MAP → direction, approved 2026-11-15: blocks are ink at low opacity,
- * one step per level, so nesting reads as darker paper rather than colour.
- * Only the largest block takes the accent.
+ * DESIGN_MAP → Viz ramp, approved 2026-11-16: top blocks are ink at an opacity
+ * set by their size rank (`--viz-*`), so the eye finds the big ones first;
+ * nested blocks add one light step, so nesting reads as darker paper. Only the
+ * largest block takes the accent; "others" is hatched.
  */
-const TONE = 0.09
-const OTHERS_TONE = 0.04
+const NEST_TONE = 0.06
 const ACCENT_TONE = 0.2
 const HOVER_TONE = 0.08
+const HATCH_TONE = 0.18
 /** Extra clear pixels on the right and bottom of each top block (3px gap vs 1px inside). */
 const TOP_GUTTER = 2
 
@@ -164,11 +165,10 @@ export function Treemap({
     const css = getComputedStyle(document.documentElement)
     const color = (name: string) => css.getPropertyValue(name).trim()
     const ink = color('--c-ink')
-    const ink2 = color('--c-ink-2')
     const accent = color('--c-accent')
-    const card = color('--c-card')
     const sans = getComputedStyle(document.body).fontFamily
     const mono = color('--font-mono') || 'monospace'
+    const ramp = readRamp(css)
     const largest = top[0]
 
     slice.cells.forEach((c, i) => {
@@ -176,8 +176,19 @@ export function Treemap({
       if (r.w < 1 || r.h < 1) return
       const isLargest = c === largest && c.id !== null
       ctx.fillStyle = isLargest ? accent : ink
-      ctx.globalAlpha = isLargest ? ACCENT_TONE : c.id === null ? OTHERS_TONE : TONE
+      ctx.globalAlpha = isLargest
+        ? ACCENT_TONE
+        : c.depth > 1
+          ? NEST_TONE
+          : c.id === null
+            ? ramp.rest
+            : rankTone(ramp, top.indexOf(c))
       ctx.fillRect(r.x, r.y, r.w, r.h)
+      if (c.id === null && c.depth === 1) {
+        ctx.beginPath()
+        ctx.rect(r.x, r.y, r.w, r.h)
+        hatch(ctx, ink, HATCH_TONE, r.x, r.y, r.w, r.h)
+      }
       if (hover?.cell === i) {
         ctx.fillStyle = ink
         ctx.globalAlpha = HOVER_TONE
@@ -194,7 +205,7 @@ export function Treemap({
       ctx.clearRect(r.x, r.y + r.h - 1, r.w + TOP_GUTTER, TOP_GUTTER)
     }
 
-    // Names go on last, on a card-coloured tag, so the blocks below don't bleed through.
+    // Names go on last, in ink straight on the block: the tones stay light enough to read on.
     ctx.textBaseline = 'top'
     for (const c of top) {
       const r = rect(c)
@@ -202,21 +213,12 @@ export function Treemap({
       const max = r.w - 20
       ctx.font = `500 13px ${sans}`
       const name = fit(ctx, c.id === null ? t('browse.others', { n: formatCount(c.others, locale), count: c.others }) : c.name, max)
-      const nameW = ctx.measureText(name).width
       ctx.font = `12px ${mono}`
       const size = fit(ctx, formatBytes(c.allocated, locale), max)
-      const sizeW = ctx.measureText(size).width
       if (!name) continue
-      ctx.fillStyle = card
-      ctx.globalAlpha = 0.92
-      ctx.beginPath()
-      ctx.roundRect(r.x + 4, r.y + 4, Math.ceil(Math.max(nameW, sizeW)) + 12, 40, 4)
-      ctx.fill()
-      ctx.globalAlpha = 1
       ctx.fillStyle = ink
       ctx.font = `500 13px ${sans}`
       ctx.fillText(name, r.x + 10, r.y + 8)
-      ctx.fillStyle = ink2
       ctx.font = `12px ${mono}`
       ctx.fillText(size, r.x + 10, r.y + 26)
     }
@@ -306,7 +308,7 @@ export function Treemap({
       aria-label={label}
       aria-activedescendant={chosen ? `map-cell-${active}` : undefined}
       onKeyDown={onKeyDown}
-      className="mt-4 flex min-h-0 flex-1 flex-col rounded-panel border border-hairline bg-card focus-visible:outline-offset-0"
+      className="mt-4 flex min-h-0 flex-1 flex-col rounded-panel border border-hairline bg-card focus-visible:border-accent focus-visible:outline-none"
     >
       <div
         ref={stage}
