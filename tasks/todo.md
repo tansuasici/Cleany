@@ -202,7 +202,18 @@ Give the task you are actively working on an `h3` heading under **In Progress** 
    - **PR 4 için sözleşme notları:**
      - Bayat okuma: `read` listesi uygulamanın çöpe taşımasından önce alındıysa `apply` o öğeyi geri ekler (sonraki olayda düzelir). Session, kendi çöpe taşımalarının çevresinde yenilemeyi sıralamalı ya da isteği yeniden toplamalı.
      - Bilinmeyen yol: `request` ağaçta olmayan yol için `None` döner. Oluşma olayı da kaybolmuş bir klasördeki `Change::Subtree` böylece hiç eklenmez. Session, bilinen ilk ataya çıkmalı (ya da birleştirici ebeveyni de sığ işaretlemeli).
-3. **Platform: `watch.rs` (`notify`, yalnız macOS).** Yeni bağımlılık burada.
+3. **Platform: `watch.rs` (`notify`, yalnız macOS).** — UYGULANDI (`feat/live-watch`, onay: "Evet, PR 3").
+   - `notify = "8.2.2"` yalnız macOS hedefinde; `tempfile` geliştirme bağımlılığı (çekirdekteki sürüm).
+   - Yeni `pub` API: `watch::{watch, Watcher, FsChange, ChangeKind, WatchError}`. `Watcher` düşünce akış durur.
+   - Olay kaybı ve akış hataları `Subtree`; okuma, sahip, izin, xattr ve Finder bilgisi değişiklikleri atılır.
+   - FSEvents çözülmüş yolu bildirir (`/private/var/...`); yollar çağıranın kök yazımına geri çevrilir.
+   - Ölçüldü: `/` izlenirken firmlink yolları `/Users/...` olarak geliyor; ek eşleme gerekmiyor.
+   - **Karar bekleyen risk:** `notify` 8.2.2 FSEvents geri çağırmasında bilinmeyen bayrakta ya da UTF-8 olmayan yolda panic eder; `panic = "abort"` ile uygulama kapanır.
+     - Bayraklar: macOS 27.2 SDK'daki 24 bayrağın hepsini tanıyor (bugün tetiklenmez).
+     - Yollar: APFS/HFS+ adları UTF-8; ağ birimleri (NFS/SMB) olmayabilir.
+     - `notify` 9.0.0-rc ikisini de düzeltiyor. Seçenek: 8.2.2'de kal ya da 9 rc'ye geç.
+   - Ölçüldü: kök `/System/Volumes/Data` yazılırsa hiç olay gelmez (bu birim seçicide gizli).
+   - Açık: Tam Disk Erişimi olmadan korumalı klasörlerden olay gelip gelmediği `tauri dev` altında ölçülemez (izin Terminal'e ait); paketli uygulamayla PR 4'te bakılacak.
 4. **Session + `ScanEvent::Changed` + UI tepkisi.**
 5. **ADR-0006** ("Canlı izleme: FSEvents, sığ yenileme, kimlik koruma, önbellek yok"), PR 2 ile birlikte `tasks/decisions.md` dosyasına. — EKLENDİ.
 
@@ -247,9 +258,9 @@ Give the task you are actively working on an `h3` heading under **In Progress** 
 - `tasks/decisions.md` (ADR-0006), `CODEBASE_MAP.md` (bir satır), `docs/PLAN.md` (§2.3 notu).
 
 #### Açık sorular
-- **`notify` sürümü.** `cargo info` 9.0.0-rc serisini gösteriyor. Kararlı 8.x mi, 9 rc mi? Öneri: kararlı olan.
-- **Geriye oynatma.** `notify` FSEvents olay kimliğiyle geriye oynatmayı (`sinceWhen`) açıyor mu? Yalnız ileride yapılacak önbellek için önemli.
-- **`/` taramasında yollar.** FSEvents yolları `/System/Volumes/Data/...` olarak mı yoksa firmlink yoluyla mı bildiriyor?
+- **`notify` sürümü.** — Yanıtlandı: kararlı 8.2.2.
+- **Geriye oynatma.** — Yanıtlandı: `notify` 8 `sinceWhen` açmıyor (akış hep "şimdi"den başlar). Önbellek gelirse ayrı crate gerekir.
+- **`/` taramasında yollar.** — Yanıtlandı (ölçüldü): firmlink yoluyla (`/Users/...`).
   - Yol eşlemesi bunu bilmeli.
   - "Not Now"daki "Macintosh HD toplamı diski aşıyor" hatasıyla bağlantılı olabilir.
 - **Tam Disk Erişimi (FDA).** FDA yokken korumalı klasörlerden olay geliyor mu? Gelmiyorsa o klasörler sessizce eski kalır.
