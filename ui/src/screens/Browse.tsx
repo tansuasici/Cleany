@@ -1,5 +1,5 @@
 import { type KeyboardEvent, useCallback, useEffect, useRef, useState } from 'react'
-import { ChevronIcon, LeaderRow } from '../components/ui'
+import { ChevronIcon, LeaderRow, ShareBar } from '../components/ui'
 import { formatBytes, formatCount, formatDate, formatShare, truncateMiddle } from '../lib/format'
 import {
   type NodeEntry,
@@ -472,7 +472,7 @@ function Table({
   ]
   // Below md only name and size fit; share, files and date drop out.
   const cols =
-    'grid grid-cols-[minmax(0,1fr)_6.5rem] gap-x-4 px-3 md:grid-cols-[minmax(0,1fr)_6.5rem_4.5rem_6rem_8.5rem]'
+    'grid grid-cols-[minmax(0,1fr)_6.5rem] gap-x-4 px-3 md:grid-cols-[minmax(0,1fr)_6.5rem_8rem_6rem_8.5rem]'
   const wide = 'hidden md:block'
 
   const rows = Array.from({ length: Math.max(0, last - first) }, (_, k) => {
@@ -490,9 +490,12 @@ function Table({
           setActive(i)
           if (opens(r)) onOpen(r)
         }}
-        className={`${cols} absolute inset-x-0 top-0 h-8 items-center rounded-control text-body ${
-          opens(r) ? 'cursor-pointer' : ''
-        } ${selected ? 'bg-raised' : 'hover:bg-raised/50'}`}
+        className={`${cols} absolute inset-x-0 top-0 h-8 cursor-pointer items-center rounded-control text-body ${
+          // Keyboard focus sits on the grid; the ring goes on the active row, where the eye is.
+          selected
+            ? 'bg-raised group-focus-visible:outline-2 group-focus-visible:-outline-offset-2 group-focus-visible:outline-accent'
+            : 'hover:bg-raised/50'
+        }`}
         style={{ transform: `translateY(${i * ROW}px)` }}
       >
         {r ? (
@@ -510,10 +513,15 @@ function Table({
             <span role="gridcell" className="text-right font-mono tabular-nums">
               {formatBytes(r.allocated, locale)}
             </span>
-            <span role="gridcell" className={`${wide} text-right font-mono text-secondary text-ink-2 tabular-nums`}>
-              {formatShare(r.allocated, node.allocated, locale)}
+            <span role="gridcell" className={`${wide} text-secondary text-ink-2 tabular-nums`}>
+              <span className="flex items-center justify-end gap-2">
+                <span className="w-16">
+                  <ShareBar ratio={node.allocated > 0 ? r.allocated / node.allocated : 0} />
+                </span>
+                <span className="w-10 text-right">{formatShare(r.allocated, node.allocated, locale)}</span>
+              </span>
             </span>
-            <span role="gridcell" className={`${wide} text-right font-mono text-secondary text-ink-2 tabular-nums`}>
+            <span role="gridcell" className={`${wide} text-right text-secondary text-ink-2 tabular-nums`}>
               {r.kind === 'dir' ? formatCount(r.files, locale) : ''}
             </span>
             <span role="gridcell" className={`${wide} text-right text-secondary text-ink-2 tabular-nums`}>
@@ -538,7 +546,7 @@ function Table({
       aria-rowcount={count + 1}
       aria-activedescendant={count > 0 && row(active) ? `browse-row-${active}` : undefined}
       onKeyDown={onKeyDown}
-      className="mt-4 flex min-h-0 flex-1 flex-col rounded-panel border border-hairline bg-card focus-visible:outline-offset-0"
+      className="group mt-4 flex min-h-0 flex-1 flex-col rounded-panel border border-hairline bg-card focus-visible:border-accent focus-visible:outline-none"
     >
       <div role="row" aria-rowindex={1} className={`${cols} h-8 shrink-0 items-center border-b border-hairline text-secondary text-ink-2`}>
         {columns.map((c, i) => {

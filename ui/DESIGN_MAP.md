@@ -45,7 +45,7 @@ Subject inventory (8–12 things only this product has; ham malzeme, henüz bir 
 Bunların dışındaki her şey sessiz kalır.
 
 ## Signature
-Adla boyutu birbirine bağlayan **noktalı çizgi**: `Belgeler ··········· 48,2 GB`. Tarama dökümünde, canlı tarama sayaçlarında (Dosya / Klasör / Süre, 2026-11-15 onaylandı), birim kartındaki en büyük üç kalemde, sepette ("Kazanılacak alan ····· 12,4 GB") ve breadcrumb toplamında kullanılır. Yoğun ağaç tabloda kullanılmaz; orada yalnızca sağa hizalı, eşit genişlikli rakamlar olur.
+Adla boyutu birbirine bağlayan **noktalı çizgi**: `Belgeler ··········· 48,2 GB`. Tarama dökümünde, canlı tarama sayaçlarında (Dosya / Klasör / Süre, 2026-11-15 onaylandı), birim kartındaki en büyük üç kalemde, sepette ("Kazanılacak alan ····· 12,4 GB") ve breadcrumb toplamında kullanılır. Yoğun ağaç tabloda kullanılmaz; orada yalnızca sağa hizalı, eşit genişlikli rakamlar olur. Toplamın üstünde fişin **çift alt toplam çizgisi** durur: 1px ink, 2px boşluk, 1px ink (`rule-total`, 2026-11-16 onaylandı).
 
 **Idea sentence:** Bu ekranda tarama sonucu, diskin döküm fişine dönüşür: kalemler, alt toplam, dürüst dipnotlar.
 
@@ -54,14 +54,17 @@ Adla boyutu birbirine bağlayan **noktalı çizgi**: `Belgeler ········�
 ## Tokens
 | Token | Value | Why (which line above) |
 |---|---|---|
-| Neutral ramp | Açık (light warm): page `#f7f4ee`, card `#fdfbf7`, raised `#efe9df`, text `#1f1b16` / `#5e554a` / `#756c60`. Koyu (dark warm): deepest `#12110f`, page `#161513`, card `#1c1a18`, raised `#262421`, text `#efe9de` / `#aaa398` / `#8a847a`. Hairline: birincil metin %8 opaklıkta. Soluk metin (`#756c60` / `#8a847a`) yalnızca page ve card üstünde kullanılır, raised üstünde değil. | World: kâğıt; uygulama ekranı olduğu için hafif tonlu |
+| Neutral ramp | Açık (light warm): deepest `#e9e3d8`, page `#f1ece3`, card `#fdfbf7`, raised `#efe9df`, text `#1f1b16` / `#5e554a` / `#6b6257`. Koyu (dark warm): deepest `#0d0c0b`, page `#12110f`, card `#1f1d1a`, raised `#2a2825`, text `#efe9de` / `#aaa398` / `#948e83`. Kâğıt (card) zeminden belirgin ayrılır; fiş zeminin üstünde durur (2026-11-16 onaylandı). Hairline: birincil metin %12. Kontrol kenarı (`edge`) %22; 3:1 gereken sınırda (`edge-strong`) açıkta %50, koyuda %40. Soluk metin yalnızca page ve card üstünde kullanılır, raised üstünde değil. | World: kâğıt; fiş zeminden ayrı bir yaprak |
+| Elevation | Yalnızca diyalog: açıkta `0 16px 40px -12px rgb(31 27 22 / .22)` + hairline kenar; koyuda gölge yok, %16 kenar. Başka hiçbir yüzeyde gölge yok (2026-11-16 onaylandı). | World: masaya bırakılmış tek kâğıt |
+| Viz ramp | Harita ve halka: boyut sırasına göre ink opaklığı, açık %34/26/18/12/7, koyu %26/20/14/9/5; "Diğer" %4 (koyu %3) + taralı. Etiketler doğrudan blokta, yalnızca ink. En büyük blok vurgu alır (2026-11-15 kuralı sürer). (2026-11-16 onaylandı) | World: kopya kâğıdı karbonu; renk değil ton |
 | Accent | Kopya kalemi mavisi: açık `#2547b8`, koyu `#8ea6ff` (kontrast ölçüldü, 2026-11-14: açık 7,16:1 page, 7,60:1 card; koyu 7,86:1 page, 7,48:1 card). Yalnızca seçim, birincil eylem ve dökümdeki en büyük kalemin çubuğu (2026-11-14 onaylandı; toplam rakamı vurgu almaz). Birim çubuğunun en büyük bölümü vurgu almaz (2026-11-15, reddedildi). | World: kopya kalemi |
 | Semantic | Pozitif `#16a34a` / `#4cc38a`, negatif `#dc2626` / `#e5484d`; negatif yalnızca gerçek hata için kullanılır, "disk dolu" için değil. Negatif metin AA'yı her zeminde geçmez (ölçülen 3,95–4,67:1); metin rengi olarak değil, kenar/işaret olarak kullanılır | Don'ts: korkutma yok |
 | Type | Sistem fontu (`system-ui`: SF / Segoe UI / Cantarell). Rakamlar `tabular-nums`, boyut sütunları `ui-monospace`. Font paketlenmez. | Character: net, yerli; "fiş" hissini rakam hizası taşır. Çevrimdışı uygulama, CSP dış kaynağa izin vermez |
-| Type scale | 12/16 meta · 13/20 ikincil · 14/20 gövde · 15/22 vurgulu gövde · 20/28 sayfa başlığı (500) · 28/1 anahtar rakam (500, tabular). Başlık rakamdan küçüktür: ekranın cevabı rakamdır (2026-11-14 onaylandı). Ağırlık 400/500, nadiren 600. | |
+| Type scale | 12/16 meta · 13/20 ikincil · 14/20 gövde · 15/22 vurgulu gövde · 20/28 sayfa başlığı (500) · 28/1 anahtar rakam (500, tabular) · 40/44 `display` (500, ekran başına en fazla bir kez: boş alan, bulunan bayt; 2026-11-16 onaylandı). Başlık rakamdan küçüktür: ekranın cevabı rakamdır (2026-11-14 onaylandı). Ağırlık 400/500, nadiren 600. Mono yalnızca boyut rakamında; birim (GB) sans, 0,6em, ink-2 (`unit`). Yüzde, dosya sayısı ve tarih sans `tabular-nums` (2026-11-16 onaylandı). | |
 | Spacing | 4px base: 2 4 8 12 16 20 24 32 40 48 64 80 96 128. 2 yalnızca çubuk aralığı ve etiket iç boşluğu gibi ince ayarlar için (2026-11-15 onaylandı). Ağaç tablo satırı 32. | |
 | Radius | Etiket 4 · satır, girdi, düğme 6 · kart 8 · panel 10 (iç içe olanlar eş merkezli) | World: kâğıt, küçük köşe |
 | Leader | Noktalı çizgi: 2px nokta, 6px aralıkla, `radial-gradient` ile (soluk metin rengi, ink-3), taban çizgisine hizalı. `1px dotted` webview'e göre değişip silik kaldığı için bırakıldı (2026-11-15 onaylandı). Bu, Don'ts'taki "gradyan" yasağının konusu değil: renk geçişi yok, yalnızca nokta deseni. | Signature |
+| Focus | Varsayılan: 2px vurgu halkası, 2px boşluk. Bileşik bileşenlerde (tablo, harita, halka) odak kapsayıcıdadır: kapsayıcı 1px vurgu kenarı alır, 2px halka etkin satır veya blokta çizilir; göz orada (2026-11-16). | Character: dürüst durum |
 | Motion | ease-out `cubic-bezier(0.23, 1, 0.32, 1)`, UI < 300ms. Canlı sayaçlar animasyonsuz güncellenir. | Character: sakin |
 | Icons | M2: 16px, 1.5 stroke, elle çizilmiş inline SVG (birim, çıkarılabilir, geri, iptal). İkon seti eklenmez. | Bağımlılık yok; ihtiyaç büyürse onayla lucide |
 
@@ -77,3 +80,5 @@ Adla boyutu birbirine bağlayan **noktalı çizgi**: `Belgeler ········�
 - Korkutma ve satış tonu yok: "diskin tehlikede!" alarmları, kırmızı uyarı yağmuru, upsell yok (2026-11-14, kullanıcı).
 - Renkli gradyan ve glow efekti yok (2026-11-14, kullanıcı).
 - Satırda, kartta ya da mesajda soldan renkli şerit yok (`border-l-2`, inset accent çubuğu). Seçim yüzey adımıyla (`bg-raised`), vurgu tam hairline kenarlıkla verilir (2026-11-15, kullanıcı).
+- Tıklanabilir her öğe el imleci (`cursor: pointer`) gösterir; devre dışı kontroller göstermez. Genel kural `index.css` base katmanında (2026-11-16, kullanıcı).
+- Arayüz metni yayın düzeyinde, laubali değil, kullanıcıya dönük (2026-11-16, kullanıcı). Uygulama: Türkçe açıklama ve ipuçlarında "siz" hitabı (seçin, yapabilirsiniz); düğme etiketleri kısa emir kipinde kalır (Tara, Yeniden tara, Çöpe taşı). Esprili başlık yok ("Yer nereye gitti?" kaldırıldı). Türkçe tırnak “…”. Çöp için genel sözcük ("çöp"), çünkü Windows da hedef.
