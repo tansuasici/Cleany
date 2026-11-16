@@ -17,10 +17,16 @@ export default function App() {
   const showVolumes = useStore((s) => s.showVolumes)
   const loadVolumes = useStore((s) => s.loadVolumes)
   const checkAccess = useStore((s) => s.checkAccess)
+  const reattach = useStore((s) => s.reattach)
 
   useEffect(() => {
     void loadVolumes()
   }, [loadVolumes])
+
+  // After a webview reload the backend may still hold a finished scan.
+  useEffect(() => {
+    void reattach()
+  }, [reattach])
 
   // Coming back from System Settings is the moment access may have changed.
   useEffect(() => {

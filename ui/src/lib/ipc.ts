@@ -173,6 +173,9 @@ export function startScan(
 
 export const cancelScan = (scan: ScanId) => invoke<void>('cancel_scan', { scan })
 
+/** The current scan's summary if it finished (e.g. after a webview reload), else `null`. */
+export const attachScan = () => invoke<ScanSummary | null>('attach_scan')
+
 export const getChildren = (
   scan: ScanId,
   node: number,

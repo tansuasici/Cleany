@@ -439,6 +439,9 @@ struct Planned {
 /// through one big directory sorts it once.
 struct Finished {
     tree: Tree,
+    /// The summary sent with `Done`. Its `root` is not kept current (a move
+    /// to the trash changes it); [`Sessions::attach`] rebuilds that field.
+    summary: ScanSummary,
     sorted: Option<SortedChildren>,
 }
 
@@ -613,7 +616,7 @@ impl Sessions {
         limit: u32,
     ) -> Result<ChildrenPage, SessionError> {
         let mut state = lock(&self.state);
-        let Finished { tree, sorted } = state.finished_mut(id)?;
+        let Finished { tree, sorted, .. } = state.finished_mut(id)?;
         let parent = tree.node_id(node).ok_or(SessionError::UnknownNode)?;
         let ids = sorted_children(tree, sorted, parent, key, order);
 
@@ -781,6 +784,23 @@ impl Sessions {
         Ok(SunburstSlice {
             node: node_entry,
             arcs,
+        })
+    }
+
+    /// The summary of the current scan if it finished, with the root as it
+    /// is now (moves to the trash change it). A UI that lost its state, e.g.
+    /// after a webview reload, uses it to reopen the scan instead of
+    /// scanning again. `None` while a scan runs, after it was cancelled or
+    /// failed, and before any scan.
+    pub fn attach(&self) -> Option<ScanSummary> {
+        let state = lock(&self.state);
+        let State::Done { scan, .. } = &*state else {
+            return None;
+        };
+        let root = entry(&scan.tree, scan.tree.root())?;
+        Some(ScanSummary {
+            root,
+            ..scan.summary.clone()
         })
     }
 
@@ -973,6 +993,7 @@ fn finish(state: &Mutex<State>, id: ScanId, result: Result<ScanResult, ScanError
                     id,
                     scan: Box::new(Finished {
                         tree: r.tree,
+                        summary: summary.clone(),
                         sorted: None,
                     }),
                 };
@@ -1101,7 +1122,7 @@ mod tests {
         CancelToken, ChildrenPage, Deletion, EntryKind, Finished, Freed, MAX_SUNBURST_DEPTH,
         MAX_TREEMAP_DEPTH, NodeEntry, RingArc, ScanEvent, ScanId, ScanIssue, ScanStats,
         ScanSummary, SessionError, Sessions, SortKey, SortOrder, State, SunburstSlice, TrashItem,
-        TrashOutcome, TrashReport, TreemapCell, TreemapSlice, lock,
+        TrashOutcome, TrashReport, TreemapCell, TreemapSlice, entry, lock,
     };
     use cleany_core::{EntryInfo, NodeFlags, NodeKind, ScanOptions, Size, Tree, TreeBuilder};
     use std::ffi::OsStr;
@@ -1140,13 +1161,42 @@ mod tests {
         b.finish()
     }
 
+    /// `tree` as the finished scan `id`, with a summary of its root.
+    fn finished(id: ScanId, tree: Tree) -> Box<Finished> {
+        let root = entry(&tree, tree.root()).unwrap();
+        let summary = ScanSummary {
+            scan: id,
+            root,
+            stats: ScanStats {
+                dirs: 1,
+                files: 0,
+                symlinks: 0,
+                others: 0,
+                skipped_mounts: 0,
+                hardlinks: 0,
+                placeholders: 0,
+                elapsed_ms: 5,
+            },
+            issues: vec![ScanIssue {
+                path: "/locked".to_owned(),
+                error: "permission denied".to_owned(),
+            }],
+            issue_count: 1,
+        };
+        Box::new(Finished {
+            tree,
+            summary,
+            sorted: None,
+        })
+    }
+
     /// A session whose current scan is already finished with `tree`.
     fn done(tree: Tree) -> (Sessions, ScanId) {
         let s = Sessions::default();
         let id = ScanId(7);
         *lock(&s.state) = State::Done {
             id,
-            scan: Box::new(Finished { tree, sorted: None }),
+            scan: finished(id, tree),
         };
         (s, id)
     }
@@ -1528,6 +1578,44 @@ mod tests {
     }
 
     #[test]
+    fn attach_returns_the_finished_scan() {
+        let (s, id) = done(small_tree());
+        let summary = s.attach().unwrap();
+        assert_eq!(summary.scan, id);
+        assert_eq!(summary.root.id, 0);
+        assert_eq!((summary.root.allocated, summary.root.files), (600, 3));
+        assert_eq!(summary.stats.elapsed_ms, 5);
+        assert_eq!(summary.issue_count, 1);
+        assert_eq!(summary.issues[0].path, "/locked");
+    }
+
+    #[test]
+    fn attach_reflects_moves_to_the_trash() {
+        let (s, id) = done(small_tree());
+        let c = child(&s, id, 0, "C");
+        let mut calls = Vec::new();
+        s.trash(id, &[c], fake(&mut calls, TrashOutcome::Trashed))
+            .unwrap();
+        let root = s.attach().unwrap().root;
+        assert_eq!((root.allocated, root.files), (400, 2));
+    }
+
+    #[test]
+    fn attach_is_none_without_a_finished_scan() {
+        let s = Sessions::default();
+        assert_eq!(s.attach(), None);
+        *lock(&s.state) = State::Scanning {
+            id: ScanId(3),
+            cancel: CancelToken::new(),
+        };
+        assert_eq!(s.attach(), None);
+        *lock(&s.state) = State::Cancelled { id: ScanId(3) };
+        assert_eq!(s.attach(), None);
+        *lock(&s.state) = State::Failed { id: ScanId(3) };
+        assert_eq!(s.attach(), None);
+    }
+
+    #[test]
     fn trash_reports_and_takes_the_node_out_of_the_tree() {
         let (s, id) = done(small_tree());
         let c = child(&s, id, 0, "C");
@@ -1727,10 +1815,7 @@ mod tests {
             .trash(id, &[a], |_, _, _| {
                 *lock(&s.state) = State::Done {
                     id: ScanId(8),
-                    scan: Box::new(Finished {
-                        tree: small_tree(),
-                        sorted: None,
-                    }),
+                    scan: finished(ScanId(8), small_tree()),
                 };
                 TrashOutcome::Trashed
             })
