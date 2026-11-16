@@ -194,12 +194,17 @@ Give the task you are actively working on an `h3` heading under **In Progress** 
    - "Dev'de her seferinde Tara" sıkıntısının yarısını hemen çözer.
    - Bu PR'da komut kanal almıyor: `attach_scan() -> Option<ScanSummary>`. Kanal parametresi `ScanEvent::Changed` ile birlikte (4. PR) eklenecek.
    - Sınır: tarama sürerken yapılan yeniden yükleme bağlanmaz; yalnız biten tarama geri açılır.
-2. **Core: ağaç yamaları ve birleştirici.**
+2. **Core: ağaç yamaları ve birleştirici.** — UYGULANDI (`feat/live-core-patches`, onay: "tamam devam").
    - `Tree::lookup`, yerinde güncelleme ve ekleme, alt ağaç aşılama, `refresh.rs`, `scan` için `root_dev` seçeneği.
    - Bağımlılık ve IPC değişikliği yok.
+   - Yeni `pub` API: `Tree::{lookup, update_entry, add_child, graft, graft_children}`, `refresh::{Coalescer, Change, Depth, RefreshPlan, request, read, apply, refresh_dir, Outcome, Applied}`, `ScanOptions::root_dev`, `ScanResult::root_dev`.
+   - Kökün altındaki yer tutucu (iCloud) ya da başka birim klasörleri yenilemede de okunmaz; tarayıcıyla aynı kural.
+   - **PR 4 için sözleşme notları:**
+     - Bayat okuma: `read` listesi uygulamanın çöpe taşımasından önce alındıysa `apply` o öğeyi geri ekler (sonraki olayda düzelir). Session, kendi çöpe taşımalarının çevresinde yenilemeyi sıralamalı ya da isteği yeniden toplamalı.
+     - Bilinmeyen yol: `request` ağaçta olmayan yol için `None` döner. Oluşma olayı da kaybolmuş bir klasördeki `Change::Subtree` böylece hiç eklenmez. Session, bilinen ilk ataya çıkmalı (ya da birleştirici ebeveyni de sığ işaretlemeli).
 3. **Platform: `watch.rs` (`notify`, yalnız macOS).** Yeni bağımlılık burada.
 4. **Session + `ScanEvent::Changed` + UI tepkisi.**
-5. **ADR-0006** ("Canlı izleme: FSEvents, sığ yenileme, kimlik koruma, önbellek yok"), PR 2 ile birlikte `tasks/decisions.md` dosyasına.
+5. **ADR-0006** ("Canlı izleme: FSEvents, sığ yenileme, kimlik koruma, önbellek yok"), PR 2 ile birlikte `tasks/decisions.md` dosyasına. — EKLENDİ.
 
 #### Onay gereken değişiklikler
 - **Yeni bağımlılık:** `cleany-platform` içine `notify`, yalnız macOS hedefinde, varsayılan `macos_fsevent` özelliğiyle.
