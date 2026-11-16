@@ -207,7 +207,7 @@ export const getSunburst = (scan: ScanId, node: number, depth = 3, minAngle = 0.
 export const getAncestors = (scan: ScanId, node: number) =>
   invoke<NodeEntry[]>('get_ancestors', { scan, node })
 
-/** Rejection value of `revealNode`, `openNode` and `getPath`. */
+/** Rejection value of `revealNode`, `openNode`, `getPath` and `trashNodes`. */
 export type ActionError =
   | { kind: 'staleScan' }
   | { kind: 'notReady' }
@@ -223,6 +223,36 @@ export const openNode = (scan: ScanId, node: number) => invoke<void>('open_node'
 
 /** The node's full path, for the clipboard. */
 export const getPath = (scan: ScanId, node: number) => invoke<string>('get_path', { scan, node })
+
+/** What happened to one item sent to the trash. */
+export type TrashOutcome =
+  | { kind: 'trashed' }
+  | { kind: 'gone' }
+  /** The scan root, a disk or home folder (or above it), a mount point, or a cloud placeholder. */
+  | { kind: 'protected' }
+  | { kind: 'failed'; message: string }
+
+export interface TrashItem {
+  node: number
+  name: string
+  outcome: TrashOutcome
+}
+
+export interface TrashReport {
+  /** In request order; nodes under another requested node are left out. */
+  items: TrashItem[]
+  /** Bytes freed by the trashed items. */
+  freed: { logical: number; allocated: number }
+  trashed: number
+  /** The root with its new totals; `null` when a newer scan replaced this one. */
+  root: NodeEntry | null
+}
+
+/**
+ * Moves the nodes to the OS trash and takes them out of the scan tree.
+ * Never asks: the UI confirms first. Per-item results are in the report.
+ */
+export const trashNodes = (scan: ScanId, nodes: number[]) => invoke<TrashReport>('trash_nodes', { scan, nodes })
 
 /**
  * Whether macOS lets the app read protected folders (Mail, Safari, other

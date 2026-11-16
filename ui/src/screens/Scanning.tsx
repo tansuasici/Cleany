@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Button, NAME, Named } from '../components/ui'
+import { Button, NAME, Named, Size } from '../components/ui'
 import { formatBytes, formatCount, formatDuration } from '../lib/format'
 import { type Screen, useStore } from '../store'
 import { useT } from '../useT'
@@ -32,30 +32,31 @@ export function ScanningScreen({ screen }: Props) {
 
   // Values update in place, without animation (DESIGN_MAP → Motion).
   return (
-    <section aria-labelledby="scan-title" className="mx-auto w-full max-w-200 px-8 py-16">
+    <section aria-labelledby="scan-title" className="mx-auto w-full max-w-200 px-4 py-10 sm:px-8 sm:py-16">
       <h1 id="scan-title" className="text-title font-medium">
         <Named text={t('scan.title', { name: NAME })} name={target.name} />
       </h1>
 
-      <div className="mt-8 rounded-panel border border-hairline bg-card p-6">
+      <div className="mt-8 rounded-panel border border-hairline bg-card p-4 sm:p-6">
         {progress === null ? (
-          <p className="text-ink-2">{t('scan.starting')}</p>
+          // Same height as the figure line, so nothing jumps when the first count lands.
+          <p className="flex min-h-11 items-center text-ink-2">{t('scan.starting')}</p>
         ) : (
           <>
             <p className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-              <span className="font-mono text-figure font-medium tabular-nums">{bytes(found)}</span>
+              <Size value={bytes(found)} className="text-display font-medium" />
               {used !== undefined && <span className="text-ink-2">{t('scan.foundOf', { used: bytes(used) })}</span>}
             </p>
             {used !== undefined && (
               <span
                 role="img"
                 aria-label={t('scan.progressLabel', { found: bytes(found), used: bytes(used) })}
-                className="mt-5 block h-1 w-full overflow-hidden rounded-full bg-raised"
+                className="mt-5 block h-2 w-full overflow-hidden rounded-tag bg-raised"
               >
                 <span className="block h-full origin-left bg-ink-2" style={{ transform: `scaleX(${ratio})` }} />
               </span>
             )}
-            <dl className="mt-6 flex max-w-80 flex-col gap-1 text-secondary text-ink-2">
+            <dl className="mt-6 flex max-w-100 flex-col gap-1 text-secondary text-ink-2">
               <Counter label={t('scan.files')} value={formatCount(progress.files, locale)} />
               <Counter label={t('scan.dirs')} value={formatCount(progress.dirs, locale)} />
               <Counter label={t('scan.elapsed')} value={formatDuration(progress.elapsedMs, locale)} />

@@ -98,6 +98,11 @@ interface State {
   showSummary: () => void
   /** Opens or closes a döküm folder in place. */
   toggleOpened: (id: number) => void
+  /**
+   * Takes in the scan root as it is after a move to the trash, and lists the
+   * döküm again; the table stays where it is.
+   */
+  trashed: (scan: ScanId, root: NodeEntry) => void
 }
 
 const LOCALE_KEY = 'cleany.locale'
@@ -267,6 +272,19 @@ export const useStore = create<State>()((set, get) => ({
 
   toggleOpened: (id) =>
     set(({ opened }) => ({ opened: opened.includes(id) ? opened.filter((o) => o !== id) : [...opened, id] })),
+
+  trashed: (scan, root) => {
+    const { screen, last } = get()
+    const done = screen.kind === 'done' ? screen : screen.kind === 'browse' ? screen.done : last
+    if (done?.summary.scan !== scan) return
+    const summary = { ...done.summary, root }
+    const fresh: DoneScreen = { ...done, summary, top: { status: 'loading' } }
+    set({
+      screen: screen.kind === 'browse' && screen.done.summary.scan === scan ? { ...screen, done: fresh } : screen,
+      last: last?.summary.scan === scan ? fresh : last,
+    })
+    void loadTop(done.target, summary)
+  },
 }))
 
 async function loadTop(target: Target, summary: ScanSummary) {

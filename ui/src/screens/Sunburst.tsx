@@ -1,7 +1,7 @@
 import { type KeyboardEvent, type MouseEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { formatBytes, formatCount, formatShare } from '../lib/format'
 import { type NodeEntry, type RingArc, type ScanId, type SunburstSlice, getSunburst } from '../lib/ipc'
-import { type Box, fit, useBox, useScheme } from '../canvas'
+import { type Box, fit, useBox, useScheme, hatch, rankTone, readRamp } from '../canvas'
 import type { ActionTarget } from './useBrowseActions'
 import { useLater } from '../useLater'
 import { useT } from '../useT'
@@ -20,14 +20,17 @@ const LABEL_ARC = 88
 const LABEL_RING = 40
 
 /*
- * DESIGN_MAP → direction, approved 2026-11-15, as on the map: slices are ink at
- * low opacity, one step darker per ring, so depth reads as darker paper rather
- * than colour. Only the largest first-ring slice takes the accent.
+ * DESIGN_MAP → Viz ramp, approved 2026-11-16, as on the map: first-ring slices
+ * are ink at an opacity set by their size rank (`--viz-*`); each ring further
+ * out keeps its first-ring slice's tone, fading by `RING_FADE`, so a branch
+ * reads as one piece. Only the largest slice takes the accent; "others" is hatched.
  */
-const TONE = 0.09
-const OTHERS_TONE = 0.04
+const RING_FADE = 0.7
 const ACCENT_TONE = 0.2
 const HOVER_TONE = 0.08
+const HATCH_TONE = 0.18
+/** The folder's size in the centre: the view's key figure. */
+const CENTRE_FIGURE = 28
 
 const NO_ARCS: RingArc[] = []
 const TAU = Math.PI * 2
@@ -189,7 +192,10 @@ export function Sunburst({
     const mono = color('--font-mono') || 'monospace'
     const g = geometry(box)
     if (g.ring <= 0) return
+    const ramp = readRamp(css)
     const largest = top[0]
+    /** The first-ring slice an arc lies under, by angle. */
+    const branch = (a: RingArc) => (a.depth === 1 ? top.indexOf(a) : top.findIndex((b) => a.start >= b.start && a.start < b.end))
 
     const path = (a: RingArc) => {
       const inner = g.hole + (a.depth - 1) * g.ring
@@ -202,9 +208,15 @@ export function Sunburst({
     arcs.forEach((a, i) => {
       path(a)
       const isLargest = a === largest && a.id !== null
+      const root = branch(a)
+      const base = a.id === null || top[root]?.id === null ? ramp.rest : rankTone(ramp, Math.max(0, root))
       ctx.fillStyle = isLargest ? accent : ink
-      ctx.globalAlpha = isLargest ? ACCENT_TONE : a.id === null ? OTHERS_TONE : 1 - (1 - TONE) ** a.depth
+      ctx.globalAlpha = isLargest ? ACCENT_TONE : base * RING_FADE ** (a.depth - 1)
       ctx.fill()
+      if (a.id === null && a.depth === 1) {
+        hatch(ctx, ink, HATCH_TONE, g.cx - g.outer, g.cy - g.outer, g.outer * 2, g.outer * 2)
+        path(a) // hatch ends its own path; the hover fill and edge need the slice again
+      }
       if (hover?.hit.at === 'arc' && hover.hit.i === i) {
         ctx.fillStyle = ink
         ctx.globalAlpha = HOVER_TONE
@@ -230,14 +242,37 @@ export function Sunburst({
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
     const room = g.hole * 1.6
-    ctx.fillStyle = ink
-    ctx.font = `500 13px ${sans}`
-    ctx.fillText(fit(ctx, name, room), g.cx, g.cy - 9)
     ctx.fillStyle = ink2
-    ctx.font = `12px ${mono}`
-    ctx.fillText(fit(ctx, formatBytes(node.allocated, locale), room), g.cx, g.cy + 9)
+    ctx.font = `500 13px ${sans}`
+    ctx.fillText(fit(ctx, name, room), g.cx, g.cy - 16)
+    // Number in mono, unit in smaller sans, as `Size` sets it in the DOM.
+    const total = formatBytes(node.allocated, locale)
+    const cut = total.lastIndexOf(' ')
+    const num = cut < 0 ? total : total.slice(0, cut)
+    const unit = cut < 0 ? '' : total.slice(cut)
+    const figure = `500 ${CENTRE_FIGURE}px ${mono}`
+    const unitFont = `${Math.round(CENTRE_FIGURE * 0.6)}px ${sans}`
+    ctx.font = figure
+    const numW = ctx.measureText(num).width
+    ctx.font = unitFont
+    const unitW = ctx.measureText(unit).width
+    if (numW + unitW <= room) {
+      ctx.textAlign = 'left'
+      const x0 = g.cx - (numW + unitW) / 2
+      ctx.fillStyle = ink
+      ctx.font = figure
+      ctx.fillText(num, x0, g.cy + 8)
+      ctx.fillStyle = ink2
+      ctx.font = unitFont
+      ctx.fillText(unit, x0 + numW, g.cy + 10)
+      ctx.textAlign = 'center'
+    } else {
+      ctx.fillStyle = ink
+      ctx.font = `12px ${mono}`
+      ctx.fillText(fit(ctx, total, room), g.cx, g.cy + 9)
+    }
 
-    // Names of the wide first-ring slices, on a card-coloured tag at the slice's middle.
+    // Names of the wide first-ring slices, in ink at the slice's middle.
     if (g.ring >= LABEL_RING) {
       for (const a of top) {
         const mid = g.hole + g.ring / 2
@@ -249,20 +284,11 @@ export function Sunburst({
         ctx.font = `500 13px ${sans}`
         const text = fit(ctx, a.id === null ? t('browse.others', { n: formatCount(a.others, locale), count: a.others }) : a.name, max)
         if (!text) continue
-        const textW = ctx.measureText(text).width
         ctx.font = `12px ${mono}`
         const size = fit(ctx, formatBytes(a.allocated, locale), max)
-        const w = Math.ceil(Math.max(textW, ctx.measureText(size).width)) + 12
-        ctx.fillStyle = card
-        ctx.globalAlpha = 0.92
-        ctx.beginPath()
-        ctx.roundRect(x - w / 2, y - 20, w, 40, 4)
-        ctx.fill()
-        ctx.globalAlpha = 1
         ctx.fillStyle = ink
         ctx.font = `500 13px ${sans}`
         ctx.fillText(text, x, y - 8)
-        ctx.fillStyle = ink2
         ctx.font = `12px ${mono}`
         ctx.fillText(size, x, y + 10)
       }
@@ -354,7 +380,7 @@ export function Sunburst({
       aria-label={label}
       aria-activedescendant={chosen ? `ring-arc-${active}` : undefined}
       onKeyDown={onKeyDown}
-      className="mt-4 flex min-h-0 flex-1 flex-col rounded-panel border border-hairline bg-card focus-visible:outline-offset-0"
+      className="mt-4 flex min-h-0 flex-1 flex-col rounded-panel border border-hairline bg-card focus-visible:border-accent focus-visible:outline-none"
     >
       <div
         ref={stage}

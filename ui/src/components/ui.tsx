@@ -65,13 +65,28 @@ export function Button({ variant = 'secondary', className = '', ...props }: Butt
   const look =
     variant === 'primary'
       ? 'bg-accent text-on-accent hover:opacity-90'
-      : 'border border-hairline bg-card text-ink hover:bg-raised'
+      : 'border border-edge bg-card text-ink hover:bg-raised'
   return (
     <button
       type="button"
-      className={`inline-flex h-8 items-center gap-2 rounded-control px-3 text-body font-medium transition-[background-color,opacity] duration-150 ease-out disabled:opacity-50 ${look} ${className}`}
+      className={`inline-flex h-8 shrink-0 items-center gap-2 rounded-control px-3 whitespace-nowrap text-body font-medium transition-[background-color,opacity] duration-150 ease-out disabled:opacity-50 ${look} ${className}`}
       {...props}
     />
+  )
+}
+
+/**
+ * A formatted size (`48,2 GB`) as a key figure: the number in mono, the unit
+ * after it in small sans (DESIGN_MAP → Type scale), so the eye reads the number.
+ */
+export function Size({ value, className = '' }: { value: string; className?: string }) {
+  const at = value.lastIndexOf(' ')
+  if (at < 0) return <span className={`font-mono tabular-nums ${className}`}>{value}</span>
+  return (
+    <span className={`whitespace-nowrap ${className}`}>
+      <span className="font-mono tabular-nums">{value.slice(0, at)}</span>
+      <span className="unit">{value.slice(at)}</span>
+    </span>
   )
 }
 
@@ -100,13 +115,17 @@ export function LeaderRow({
         <bdi>{name}</bdi>
       </span>
       <span className="leader" aria-hidden />
-      <span className={`shrink-0 font-mono tabular-nums ${figure ? 'text-figure font-medium' : ''}`}>{value}</span>
+      {figure && typeof value === 'string' ? (
+        <Size value={value} className="shrink-0 text-figure font-medium" />
+      ) : (
+        <span className="shrink-0 font-mono tabular-nums">{value}</span>
+      )}
     </span>
   )
 }
 
 /**
- * Fullness bar, 12 tall. `used` fills the track; `parts` (largest items
+ * Fullness bar, 20 tall. `used` fills the track; `parts` (largest items
  * first) split the filled part, 2px apart so each reads as its own block.
  */
 export function UsageBar({
@@ -127,7 +146,7 @@ export function UsageBar({
     <div
       role="img"
       aria-label={label}
-      className="flex h-3 w-full gap-0.5 overflow-hidden rounded-tag bg-raised"
+      className="flex h-5 w-full gap-0.5 overflow-hidden rounded-tag bg-raised"
     >
       {parts.map((bytes, i) => (
         <span key={i} className="h-full shrink-0 bg-ink-2" style={{ width: `${pct(bytes)}%` }} />
