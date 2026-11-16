@@ -2,10 +2,12 @@ import { create } from 'zustand'
 import {
   type DiskAccess,
   type NodeEntry,
+  type NodeKind,
   type ScanId,
   type ScanSummary,
   type VolumeEntry,
   cancelScan,
+  getAncestors,
   getChildren,
   getDiskAccess,
   listVolumes,
@@ -63,6 +65,29 @@ export interface VolumeBreakdown {
   at: number
 }
 
+/** An item put aside to move to the trash together with others. */
+export interface BasketItem {
+  id: number
+  name: string
+  kind: NodeKind
+  allocated: number
+  files: number
+  /** Ids of the folders above it, root first; finds overlaps between items. */
+  chain: number[]
+}
+
+/** The selection basket; it belongs to one scan, so a new scan clears it. */
+export interface Basket {
+  scan: ScanId
+  items: BasketItem[]
+}
+
+/** What adding to the basket did. */
+export type BasketAdd =
+  | { kind: 'added'; replaced: number }
+  /** A folder already in the basket holds the item. */
+  | { kind: 'covered'; by: string }
+
 /** How many items the döküm lists. */
 export const TOP_ITEMS = 12
 
@@ -103,6 +128,19 @@ interface State {
    * döküm again; the table stays where it is.
    */
   trashed: (scan: ScanId, root: NodeEntry) => void
+  basket: Basket | null
+  /**
+   * Puts an item in the basket. An item inside a basket folder is not added;
+   * a folder takes the place of the basket items inside it.
+   */
+  addToBasket: (scan: ScanId, item: BasketItem) => BasketAdd
+  removeFromBasket: (id: number) => void
+  clearBasket: () => void
+  /**
+   * After a move to the trash: drops the items that are gone and takes in the
+   * new sizes of the rest (a basket folder may have lost a file).
+   */
+  refreshBasket: (scan: ScanId) => Promise<void>
 }
 
 const LOCALE_KEY = 'cleany.locale'
@@ -147,6 +185,7 @@ export const useStore = create<State>()((set, get) => ({
   breakdowns: {},
   last: null,
   opened: [],
+  basket: null,
 
   setLocale: (locale) => {
     try {
@@ -188,7 +227,7 @@ export const useStore = create<State>()((set, get) => ({
     const gen = ++generation
     const current = () => gen === generation
     cancelPending = false
-    set({ screen: { kind: 'scanning', target, scan: null, progress: null }, last: null, opened: [] })
+    set({ screen: { kind: 'scanning', target, scan: null, progress: null }, last: null, opened: [], basket: null })
 
     try {
       const scan = await startScan(target.path, false, (event) => {
@@ -284,6 +323,53 @@ export const useStore = create<State>()((set, get) => ({
       last: last?.summary.scan === scan ? fresh : last,
     })
     void loadTop(done.target, summary)
+  },
+
+  addToBasket: (scan, item) => {
+    const { basket } = get()
+    const items = basket?.scan === scan ? basket.items : []
+    const holder = items.find((b) => item.chain.includes(b.id))
+    if (holder) return { kind: 'covered', by: holder.name }
+    const inside = items.filter((b) => b.chain.includes(item.id)).length
+    const kept = items.filter((b) => b.id !== item.id && !b.chain.includes(item.id))
+    set({ basket: { scan, items: [...kept, item] } })
+    return { kind: 'added', replaced: inside }
+  },
+
+  removeFromBasket: (id) => {
+    const { basket } = get()
+    if (!basket) return
+    const items = basket.items.filter((b) => b.id !== id)
+    set({ basket: items.length > 0 ? { ...basket, items } : null })
+  },
+
+  clearBasket: () => set({ basket: null }),
+
+  refreshBasket: async (scan) => {
+    const { basket } = get()
+    if (basket?.scan !== scan) return
+    const fresh = await Promise.all(
+      basket.items.map(async (item): Promise<BasketItem | null> => {
+        try {
+          const chain = await getAncestors(scan, item.id)
+          const node = chain.at(-1)
+          return node ? { ...item, allocated: node.allocated, files: node.files } : null
+        } catch {
+          // Gone from the tree: moved to the trash, or under something that was.
+          return null
+        }
+      }),
+    )
+    const now = get().basket
+    // The basket may have changed while the sizes were loading; keep its items.
+    if (now?.scan !== scan) return
+    const byId = new Map(fresh.filter((f) => f !== null).map((f) => [f.id, f]))
+    const items = now.items.flatMap((item) => {
+      if (!basket.items.some((b) => b.id === item.id)) return [item]
+      const f = byId.get(item.id)
+      return f ? [f] : []
+    })
+    set({ basket: items.length > 0 ? { ...now, items } : null })
   },
 }))
 
