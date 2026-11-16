@@ -16,8 +16,8 @@ use tauri::ipc::Channel;
 use access::{AccessError, DiskAccess};
 use actions::ActionError;
 use session::{
-    ChildrenPage, NodeEntry, ScanEvent, ScanId, SessionError, Sessions, SortKey, SortOrder,
-    SunburstSlice, TrashReport, TreemapSlice,
+    ChildrenPage, NodeEntry, ScanEvent, ScanId, ScanSummary, SessionError, Sessions, SortKey,
+    SortOrder, SunburstSlice, TrashReport, TreemapSlice,
 };
 use volumes::VolumeEntry;
 
@@ -69,6 +69,13 @@ fn start_scan(
 #[tauri::command]
 fn cancel_scan(sessions: tauri::State<'_, Sessions>, scan: ScanId) -> Result<(), SessionError> {
     sessions.cancel(scan)
+}
+
+/// The current scan's summary if it finished, so a reloaded webview can
+/// reopen it without scanning again. `None` otherwise.
+#[tauri::command]
+fn attach_scan(sessions: tauri::State<'_, Sessions>) -> Option<ScanSummary> {
+    sessions.attach()
 }
 
 /// One sorted page of a node's children.
@@ -193,6 +200,7 @@ pub fn run() {
             list_volumes,
             start_scan,
             cancel_scan,
+            attach_scan,
             get_children,
             get_ancestors,
             get_treemap,
