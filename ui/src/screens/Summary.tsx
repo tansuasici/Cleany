@@ -1,24 +1,22 @@
 import { useEffect, useState } from 'react'
 import { Button, ChevronIcon, LeaderRow, NAME, Named, ShareBar } from '../components/ui'
-import { formatBytes, formatCount, formatDuration, formatShare, truncateMiddle } from '../lib/format'
+import { formatBytes, formatCount, formatDuration, truncateMiddle } from '../lib/format'
 import { type NodeEntry, type ScanId, getChildren, openDiskAccessSettings } from '../lib/ipc'
 import { type DoneScreen, useStore } from '../store'
 import { useT } from '../useT'
 
 type Props = { screen: DoneScreen }
 
-/** How many children an opened folder lists in place. */
-const CHILD_ITEMS = 8
+/** An opened folder lists all its children, up to the backend's page cap (`MAX_PAGE`). */
+const CHILD_ITEMS = 1000
 /** Names longer than this are cut in the middle; the full name is the tooltip. */
 const NAME_CHARS = 44
 /** Below this share of the total a bar would be a speck, so none is drawn. */
 const MIN_BAR_SHARE = 0.005
 
-/** One grid for every döküm line: name ··· size | bar | share | open (narrow: name | share | open, bar below). */
+/** One grid for every döküm line: name ··· size | bar | open (narrow: name | open, bar below). */
 const LINE =
-  'grid grid-cols-[minmax(0,1fr)_3rem_2.5rem] items-baseline gap-x-2 sm:grid-cols-[minmax(0,1fr)_7.5rem_3.5rem_3rem] sm:gap-x-4'
-/** Share sits after the name on narrow screens, after the bar from `sm` up; the bar drops under the name. */
-const SHARE_CELL = 'col-start-2 row-start-1 text-right sm:col-start-3'
+  'grid grid-cols-[minmax(0,1fr)_2.5rem] items-baseline gap-x-2 sm:grid-cols-[minmax(0,1fr)_7.5rem_3rem] sm:gap-x-4'
 
 /** Moment 2: the end-of-scan döküm — items with their share, one subtotal, footnotes. */
 export function SummaryScreen({ screen }: Props) {
@@ -42,7 +40,7 @@ export function SummaryScreen({ screen }: Props) {
   return (
     <section
       aria-labelledby="summary-title"
-      className="mx-auto w-full max-w-156 px-4 py-10 sm:px-8 min-[1100px]:grid min-[1100px]:max-w-240 min-[1100px]:grid-cols-[minmax(0,35rem)_17.5rem] min-[1100px]:gap-x-8"
+      className="mx-auto w-full max-w-156 px-4 py-10 sm:px-8 min-[1100px]:grid min-[1100px]:min-h-0 min-[1100px]:max-w-240 min-[1100px]:flex-1 min-[1100px]:grid-cols-[minmax(0,35rem)_17.5rem] min-[1100px]:grid-rows-[auto_minmax(0,1fr)] min-[1100px]:gap-x-8"
     >
       <header className="min-[1100px]:col-span-2">
         <h1 id="summary-title" className="text-title font-medium">
@@ -53,12 +51,11 @@ export function SummaryScreen({ screen }: Props) {
         )}
       </header>
 
-      <article className="mt-8 rounded-panel border border-hairline bg-card p-4 sm:p-6">
-        <div className={`${LINE} text-secondary text-ink-2`}>
-          <h2 className="col-start-1 row-start-1 pl-5">{t('summary.items')}</h2>
-          <span className={SHARE_CELL}>{t('summary.share')}</span>
-        </div>
-        <div className="mt-3">
+      {/* Wide windows: the page stays put and only the list scrolls. */}
+      <article className="mt-8 rounded-panel border border-card-edge bg-card p-4 shadow-card sm:p-6 min-[1100px]:flex min-[1100px]:max-h-full min-[1100px]:min-h-0 min-[1100px]:flex-col min-[1100px]:self-start">
+        {/* Named for screen readers only; the list speaks for itself on screen. */}
+        <h2 className="sr-only">{t('summary.items')}</h2>
+        <div className="min-[1100px]:flex min-[1100px]:min-h-0 min-[1100px]:flex-1 min-[1100px]:flex-col">
           {top.status === 'loading' && (
             <p role="status" className="text-ink-2">
               {t('summary.loadingItems')}
@@ -72,7 +69,7 @@ export function SummaryScreen({ screen }: Props) {
           {top.status === 'ready' && top.items.length === 0 && <p className="text-ink-2">{t('summary.noItems')}</p>}
           {top.status === 'ready' && top.items.length > 0 && (
             <>
-              <ol className="-mx-2 flex flex-col">
+              <ol className="-mx-2 flex flex-col min-[1100px]:min-h-0 min-[1100px]:overflow-auto min-[1100px]:overscroll-contain">
                 {top.items.map((item, i) => (
                   <ItemRow
                     key={item.id}
@@ -87,7 +84,6 @@ export function SummaryScreen({ screen }: Props) {
                   <OthersRow
                     count={top.total - top.items.length}
                     bytes={root.allocated - top.items.reduce((a, i) => a + i.allocated, 0)}
-                    total={root.allocated}
                     depth={0}
                   />
                 )}
@@ -103,7 +99,7 @@ export function SummaryScreen({ screen }: Props) {
         </div>
       </article>
 
-      <aside className="mt-8 flex flex-col gap-6 min-[1100px]:pt-6">
+      <aside className="mt-8 flex flex-col gap-6 min-[1100px]:min-h-0 min-[1100px]:overflow-auto min-[1100px]:pt-6">
         {(notes.length > 0 || issueCount > 0) && (
           <div>
             <h2 className="text-secondary font-medium text-ink-2">{t('summary.notCounted')}</h2>
@@ -249,9 +245,6 @@ function ItemRow({
       >
         {bar && <ShareBar ratio={max > 0 ? item.allocated / max : 0} accent={accent} />}
       </span>
-      <span className={`${SHARE_CELL} text-secondary text-ink-2 tabular-nums`}>
-        {formatShare(item.allocated, total, locale)}
-      </span>
     </>
   )
 
@@ -271,11 +264,21 @@ function ItemRow({
           </button>
           <OpenLink item={item} onOpen={() => browse(item)} />
         </div>
-      ) : (
-        <div className={`${line} relative`}>
+      ) : isFolder ? (
+        <button
+          type="button"
+          onClick={() => browse(item)}
+          aria-label={t('summary.openLabel', { name: item.name })}
+          className={`${line} relative w-full cursor-pointer text-left transition-[background-color] duration-150 ease-out hover:bg-raised motion-reduce:transition-none`}
+        >
           {cells}
-          {isFolder && <OpenLink item={item} onOpen={() => browse(item)} />}
-        </div>
+          <span aria-hidden className={OPEN_CLASS}>
+            {t('summary.open')}
+            <ChevronIcon />
+          </span>
+        </button>
+      ) : (
+        <div className={`${line} relative`}>{cells}</div>
       )}
 
       {children?.status === 'loading' && (
@@ -289,7 +292,7 @@ function ItemRow({
         </p>
       )}
       {children?.status === 'ready' && (
-        <ol className="flex flex-col pb-1">
+        <ol className="flex flex-col pb-1 enter-items">
           {children.items.map((child) => (
             <ItemRow key={child.id} item={child} scanId={scanId} total={total} max={max} depth={depth + 1} />
           ))}
@@ -297,7 +300,6 @@ function ItemRow({
             <OthersRow
               count={children.total - children.items.length}
               bytes={item.allocated - children.items.reduce((a, c) => a + c.allocated, 0)}
-              total={total}
               depth={depth + 1}
             />
           )}
@@ -307,7 +309,10 @@ function ItemRow({
   )
 }
 
-/** "Aç →": goes into a folder in the table. Shown on hover or focus, in the line's last column. */
+const OPEN_CLASS =
+  'absolute top-1/2 right-2 flex min-h-6 w-10 -translate-y-1/2 sm:w-12 items-center justify-end gap-0.5 rounded-tag text-secondary text-ink-3 transition-[color] duration-150 ease-out group-hover:text-ink-2 hover:text-ink motion-reduce:transition-none'
+
+/** "Aç →": goes into a folder in the table, in the line's last column. Always shown, quiet until hovered. */
 function OpenLink({ item, onOpen }: { item: NodeEntry; onOpen: () => void }) {
   const { t } = useT()
   return (
@@ -315,7 +320,7 @@ function OpenLink({ item, onOpen }: { item: NodeEntry; onOpen: () => void }) {
       type="button"
       onClick={onOpen}
       aria-label={t('summary.openLabel', { name: item.name })}
-      className="absolute top-1/2 right-2 flex min-h-6 w-10 -translate-y-1/2 sm:w-12 items-center justify-end gap-0.5 rounded-tag text-secondary text-ink-2 opacity-0 transition-opacity duration-150 ease-out group-hover:opacity-100 hover:text-ink focus-visible:opacity-100 motion-reduce:transition-none"
+      className={`${OPEN_CLASS} cursor-pointer`}
     >
       {t('summary.open')}
       <ChevronIcon />
@@ -324,7 +329,7 @@ function OpenLink({ item, onOpen }: { item: NodeEntry; onOpen: () => void }) {
 }
 
 /** The remainder after the listed items: `Diğer 214 öğe ···· 3,1 GB`. */
-function OthersRow({ count, bytes, total, depth }: { count: number; bytes: number; total: number; depth: number }) {
+function OthersRow({ count, bytes, depth }: { count: number; bytes: number; depth: number }) {
   const { t, locale } = useT()
   const size = Math.max(0, bytes)
   return (
@@ -332,7 +337,6 @@ function OthersRow({ count, bytes, total, depth }: { count: number; bytes: numbe
       <span className={`col-start-1 row-start-1 ${depth > 0 ? 'pl-10' : 'pl-5'}`}>
         <LeaderRow name={t('summary.others', { n: formatCount(count, locale), count })} value={formatBytes(size, locale)} />
       </span>
-      <span className={`${SHARE_CELL} text-secondary tabular-nums`}>{formatShare(size, total, locale)}</span>
     </li>
   )
 }

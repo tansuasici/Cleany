@@ -1,4 +1,5 @@
-//! Show, open, copy-path, move-to-trash and delete for scanned nodes. The UI names a
+//! Show, open, open-in-terminal, copy-path, move-to-trash and delete for
+//! scanned nodes. The UI names a
 //! node; the path always comes from the scan tree, never from the webview.
 //!
 //! Mirrors `ActionError` in `ui/src/lib/ipc.ts`;
@@ -15,7 +16,7 @@ use serde::Serialize;
 use crate::deletion_log::{self, Removal};
 use crate::session::{Deletion, ScanId, SessionError, Sessions, TrashOutcome, TrashReport};
 
-/// Why a show / open / copy-path request failed.
+/// Why a show / open / open-in-terminal / copy-path request failed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(
     tag = "kind",
@@ -31,7 +32,7 @@ pub enum ActionError {
     UnknownNode,
     /// The item was deleted or moved since the scan.
     Gone,
-    /// The file manager or default app could not be started.
+    /// The file manager, default app or terminal could not be started.
     Launch {
         /// What went wrong, for the log; the UI shows its own text.
         message: String,
@@ -87,6 +88,12 @@ pub fn reveal(sessions: &Sessions, scan: ScanId, node: u32) -> Result<(), Action
 pub fn open(sessions: &Sessions, scan: ScanId, node: u32) -> Result<(), ActionError> {
     let path = sessions.path(scan, node)?;
     Ok(shell::open(&path)?)
+}
+
+/// Opens a terminal in the node if it is a folder, else in its parent.
+pub fn open_terminal(sessions: &Sessions, scan: ScanId, node: u32) -> Result<(), ActionError> {
+    let path = sessions.path(scan, node)?;
+    Ok(shell::open_terminal(&path)?)
 }
 
 /// The node's full path as text, for the clipboard. Non-UTF-8 bytes become
@@ -303,6 +310,7 @@ mod tests {
         for cmd in [
             "'reveal_node'",
             "'open_node'",
+            "'open_terminal'",
             "'get_path'",
             "'trash_nodes'",
             "'delete_nodes'",

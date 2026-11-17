@@ -1,7 +1,11 @@
 import { type KeyboardEvent, useCallback, useEffect, useEffectEvent, useRef, useState } from 'react'
-import { Button, ChevronIcon, LeaderRow, ShareBar } from '../components/ui'
+import { createPortal } from 'react-dom'
+import { Button, CheckIcon, ChevronIcon, EmptyLine, LeaderRow, ShareBar, SkeletonRows } from '../components/ui'
 import { formatBytes, formatCount, formatDate, formatShare, truncateMiddle } from '../lib/format'
 import {
+  type ExportError,
+  type ExportFormat,
+  type ExportScope,
   type LargestKind,
   type NodeEntry,
   type ScanId,
@@ -11,14 +15,30 @@ import {
   getAncestors,
   getChildren,
   deleteNodes,
+  exportScan,
   trashNodes,
 } from '../lib/ipc'
 import { type BrowseScreen, useStore } from '../store'
 import { BasketBar } from './Basket'
-import { ActionBar, BasketTrashDialog, type Removal, type TrashNote, TrashDialog } from './BrowseActions'
+import {
+  ActionBar,
+  BasketTrashDialog,
+  ItemMenu,
+  type Removal,
+  type TrashNote,
+  TrashDialog,
+} from './BrowseActions'
 import { useOs } from '../useOs'
-import { type ActionTarget, actionKeys, deleteKey, trashKey, useBrowseActions } from './useBrowseActions'
-import { Largest } from './Largest'
+import {
+  type ActionTarget,
+  type MenuAt,
+  actionKeys,
+  deleteKey,
+  menuPoint,
+  trashKey,
+  useBrowseActions,
+} from './useBrowseActions'
+import { LIMIT as LARGEST_LIMIT, Largest } from './Largest'
 import { Sunburst } from './Sunburst'
 import { Treemap } from './Treemap'
 import { useT } from '../useT'
@@ -42,7 +62,7 @@ const NAME_CHARS = 64
 /** The loading line waits this long, so a quick folder change doesn't flash it. */
 const LOADING_DELAY_MS = 250
 
-const VIEWS = ['table', 'map', 'rings', 'largest'] as const
+const VIEWS = ['table', 'map', 'largest', 'rings'] as const
 type View = (typeof VIEWS)[number]
 const VIEW_KEY = 'cleany.browseView'
 const VIEW_TEXT = { table: 'browse.table', map: 'browse.map', rings: 'browse.rings', largest: 'browse.largest' } as const
@@ -136,6 +156,9 @@ export function BrowseView({ screen }: { screen: BrowseScreen }) {
   const target = picked ?? { id: node.id, name }
   const actions = useBrowseActions(scan, target)
   const os = useOs()
+  // The item menu, open at this point after a right-click.
+  const [menu, setMenu] = useState<MenuAt | null>(null)
+  const closeMenu = useCallback(() => setMenu(null), [])
 
   // Moving to the trash: what is being asked about, and what the last move did.
   const [asking, setAsking] = useState<Asking | null>(null)
@@ -192,6 +215,29 @@ export function BrowseView({ screen }: { screen: BrowseScreen }) {
           : t('basket.added', { name: at.name })
     setNote({ status, alert: '' })
   }
+  // The save dialog runs in the app; a closed dialog leaves no note.
+  const runExport = async (scope: ExportScope, format: ExportFormat) => {
+    setNote(null)
+    try {
+      const report = await exportScan(scan, scope, format)
+      if (report)
+        setNote({
+          status: t('export.done', { n: formatCount(report.rows, locale), count: report.rows, file: report.fileName }),
+          alert: '',
+        })
+    } catch (e) {
+      const stale = (e as ExportError | undefined)?.kind === 'staleScan'
+      setNote({ status: '', alert: t(stale ? 'export.stale' : 'export.error') })
+    }
+  }
+  // What is on screen: the folder's rows in the table's order (the map and the
+  // rings show them by size), or the largest list as it stands.
+  const viewScope = (): ExportScope =>
+    view === 'largest'
+      ? { kind: 'largest', node: node.id, largest: largestKind, limit: LARGEST_LIMIT }
+      : view === 'table'
+        ? { kind: 'children', node: node.id, sort: sort.key, order: sort.order }
+        : { kind: 'children', node: node.id, sort: 'allocated', order: 'desc' }
   const askBasket = () => {
     if (basketItems && !asking) setAsking({ kind: 'basket', removal: 'trash' })
   }
@@ -314,7 +360,9 @@ export function BrowseView({ screen }: { screen: BrowseScreen }) {
   const canBack = ownHistory !== null && ownHistory.at > 0
   const canForward = ownHistory !== null && ownHistory.at < ownHistory.entries.length - 1
   const step = (by: -1 | 1) => {
-    if (by < 0 ? !canBack : !canForward) return
+    // Back from the first folder opened returns to the döküm it came from.
+    if (by < 0 && !canBack) return showSummary()
+    if (by > 0 && !canForward) return
     // Set first, so the folder that comes into view selects the one left.
     setCameFrom(node.id)
     void go(by).then((moved) => {
@@ -344,14 +392,13 @@ export function BrowseView({ screen }: { screen: BrowseScreen }) {
         if (permanentDelete) deleteKey(mac, askDelete)(e)
         historyKeys(mac, step)(e)
       }}
-      className="mx-auto flex h-full w-full max-w-240 flex-col px-8 pt-8 pb-4">
-      <div className="flex min-w-0 items-center gap-3">
+      className="mx-auto flex min-h-0 w-full max-w-360 flex-1 flex-col px-8 pt-6 pb-4 max-sm:px-4">
+      <div className="flex min-w-0 flex-wrap items-center gap-3">
         <div role="group" aria-label={t('browse.history')} className="flex shrink-0 gap-1">
           <Button
-            aria-label={t('browse.back')}
+            aria-label={canBack ? t('browse.back') : t('browse.backToSummary')}
             aria-keyshortcuts={navKeys.back.aria}
-            aria-disabled={!canBack}
-            title={`${t('browse.back')} (${navKeys.back.label})`}
+            title={`${canBack ? t('browse.back') : t('browse.backToSummary')} (${navKeys.back.label})`}
             onClick={() => step(-1)}
             className={navLook}
           >
@@ -372,27 +419,21 @@ export function BrowseView({ screen }: { screen: BrowseScreen }) {
             </span>
           </Button>
         </div>
-        <h1 id="browse-title" className="min-w-0 flex-1 text-title font-medium">
+        <h1 id="browse-title" className="min-w-0 flex-1 basis-60 text-title font-medium">
           <LeaderRow name={name} title={name} value={formatBytes(node.allocated, locale)} />
         </h1>
+        <div className="flex items-center gap-2 max-sm:w-full">
+          <ExportMenu
+            onPick={(whole, format) =>
+              void runExport(whole ? { kind: 'subtree', node: done.summary.root.id } : viewScope(), format)
+            }
+          />
+          <ViewPicker value={view} onChange={choose} />
+        </div>
       </div>
 
-      <div role="group" aria-label={t('browse.view')} className="mt-4 flex gap-1 self-start rounded-control border border-hairline bg-card p-0.5">
-        {VIEWS.map((v) => (
-          <button
-            key={v}
-            type="button"
-            aria-pressed={view === v}
-            onClick={() => choose(v)}
-            className={`h-7 rounded-tag px-3 text-secondary transition-[background-color,color] duration-150 ease-out ${
-              view === v ? 'bg-raised text-ink' : 'text-ink-2 hover:text-ink'
-            }`}
-          >
-            {t(VIEW_TEXT[v])}
-          </button>
-        ))}
-      </div>
-
+      {/* Keyed by view: switching views fades once; moving between folders does not. */}
+      <div key={view} className="flex min-h-0 flex-1 flex-col enter-view">
       {view === 'table' ? (
         <Table
           key={rev}
@@ -407,6 +448,8 @@ export function BrowseView({ screen }: { screen: BrowseScreen }) {
           onUp={up}
           onExit={showSummary}
           onSelect={setPicked}
+          onMenu={setMenu}
+          hint={t(HINT_TEXT[view])}
           basketIds={basketIds}
         />
       ) : view === 'map' ? (
@@ -421,6 +464,8 @@ export function BrowseView({ screen }: { screen: BrowseScreen }) {
           onUp={up}
           onExit={showSummary}
           onSelect={setPicked}
+          onMenu={setMenu}
+          hint={t(HINT_TEXT[view])}
         />
       ) : view === 'largest' ? (
         <Largest
@@ -435,6 +480,8 @@ export function BrowseView({ screen }: { screen: BrowseScreen }) {
           onUp={up}
           onExit={showSummary}
           onSelect={setPicked}
+          onMenu={setMenu}
+          hint={t(HINT_TEXT[view])}
         />
       ) : (
         <Sunburst
@@ -450,8 +497,11 @@ export function BrowseView({ screen }: { screen: BrowseScreen }) {
           onUp={up}
           onExit={showSummary}
           onSelect={setPicked}
+          onMenu={setMenu}
+          hint={t(HINT_TEXT[view])}
         />
       )}
+      </div>
 
       <div className="mt-3 flex flex-col gap-2">
         <ActionBar
@@ -466,6 +516,21 @@ export function BrowseView({ screen }: { screen: BrowseScreen }) {
           onDelete={askDelete}
           note={note}
         />
+        {menu && (
+          <ItemMenu
+            at={menu}
+            onClose={closeMenu}
+            actions={actions}
+            os={os}
+            canTrash={canTrash}
+            onTrash={askTrash}
+            inBasket={inBasket}
+            onBasket={() => void toggleBasket()}
+            permanent={permanentDelete}
+            onDelete={askDelete}
+            onExport={(format) => void runExport({ kind: 'subtree', node: target.id }, format)}
+          />
+        )}
         {basketItems && (
           <BasketBar
             basket={{ scan, items: basketItems }}
@@ -475,7 +540,6 @@ export function BrowseView({ screen }: { screen: BrowseScreen }) {
             onClear={clearBasket}
           />
         )}
-        <p className="text-meta text-ink-3">{t(HINT_TEXT[view])}</p>
       </div>
 
       {asking?.kind === 'one' && (
@@ -572,6 +636,8 @@ function Table({
   onUp,
   onExit,
   onSelect,
+  onMenu,
+  hint,
   basketIds,
 }: {
   scan: ScanId
@@ -586,6 +652,10 @@ function Table({
   onUp: () => void
   onExit: () => void
   onSelect: (target: ActionTarget | null) => void
+  /** Opens the item menu for the item just selected. */
+  onMenu: (at: MenuAt) => void
+  /** The short key hint shown at the right of the footer. */
+  hint: string
   /** Rows in the basket get a mark before the name. */
   basketIds: readonly number[]
 }) {
@@ -737,6 +807,12 @@ function Table({
           setActive(i)
           if (opens(r)) onOpen(r)
         }}
+        onContextMenu={(e) => {
+          if (!r) return
+          e.preventDefault()
+          setActive(i)
+          onMenu(menuPoint(e))
+        }}
         className={`${cols} absolute inset-x-0 top-0 h-8 cursor-pointer items-center rounded-control text-body ${
           // Keyboard focus sits on the grid; the ring goes on the active row, where the eye is.
           selected
@@ -762,7 +838,7 @@ function Table({
                 </span>
               )}
             </span>
-            <span role="gridcell" className="text-right font-mono tabular-nums">
+            <span role="gridcell" className="text-right tabular-nums">
               {formatBytes(r.allocated, locale)}
             </span>
             <span role="gridcell" className={`${wide} text-secondary text-ink-2 tabular-nums`}>
@@ -798,7 +874,10 @@ function Table({
       aria-rowcount={count + 1}
       aria-activedescendant={count > 0 && row(active) ? `browse-row-${active}` : undefined}
       onKeyDown={onKeyDown}
-      className="group mt-4 flex min-h-0 flex-1 flex-col rounded-panel border border-hairline bg-card focus-visible:border-accent focus-visible:outline-none"
+      onContextMenu={(e) => {
+        if (e.target === e.currentTarget && row(active)) onMenu(menuPoint(e))
+      }}
+      className="group mt-4 flex min-h-0 flex-1 flex-col rounded-panel border border-card-edge bg-card shadow-card focus-visible:border-accent focus-visible:outline-none"
     >
       <div role="row" aria-rowindex={1} className={`${cols} h-8 shrink-0 items-center border-b border-hairline text-secondary text-ink-2`}>
         {columns.map((c, i) => {
@@ -849,11 +928,10 @@ function Table({
               {t('volumes.retry')}
             </button>
           </p>
-        ) : pages.total === null || count === 0 ? (
-          // One status line for loading and empty, so the empty result is announced too.
-          <p role="status" className="px-3 py-2 text-ink-2">
-            {pages.total === null ? slow && t('browse.loading') : t('browse.empty')}
-          </p>
+        ) : pages.total === null ? (
+          slow && <SkeletonRows label={t('browse.loading')} />
+        ) : count === 0 ? (
+          <EmptyLine text={t('browse.empty')} action={t('browse.goUp')} onAction={onUp} />
         ) : (
           <div className="relative" style={{ height: count * ROW }}>
             {rows}
@@ -862,13 +940,227 @@ function Table({
       </div>
 
       {/* The selected name in full; the row already says it to a screen reader. */}
-      <p aria-hidden className="flex h-8 shrink-0 items-center border-t border-hairline px-4 text-meta text-ink-2">
+      <div className="flex h-8 shrink-0 items-center gap-3 px-4 text-meta text-ink-2">
         {selectedRow && (
-          <bdi className="min-w-0 truncate" title={selectedRow.name}>
+          <bdi aria-hidden className="min-w-0 truncate" title={selectedRow.name}>
             {selectedRow.name}
           </bdi>
         )}
-      </p>
+        <span className="ml-auto shrink-0 text-ink-3 max-md:hidden">{hint}</span>
+      </div>
     </div>
+  )
+}
+
+/**
+ * The view picker: a button that names the current view and opens a short
+ * menu of the others. Portalled like the item menu, so the screen's enter
+ * motion can't shift it; Escape, Tab and a click outside close it.
+ */
+function ViewPicker({ value, onChange }: { value: View; onChange: (next: View) => void }) {
+  const { t } = useT()
+  const trigger = useRef<HTMLButtonElement>(null)
+  const menu = useRef<HTMLDivElement>(null)
+  const [at, setAt] = useState<{ right: number; top: number } | null>(null)
+
+  const open = () => {
+    const box = trigger.current?.getBoundingClientRect()
+    if (box) setAt({ right: window.innerWidth - box.right, top: box.bottom + 4 })
+  }
+  const close = (refocus: boolean) => {
+    setAt(null)
+    if (refocus) trigger.current?.focus()
+  }
+
+  useEffect(() => {
+    if (!at) return
+    menu.current?.querySelector<HTMLButtonElement>('[aria-checked="true"]')?.focus()
+    const away = (e: PointerEvent) => {
+      const target = e.target as Node
+      if (!menu.current?.contains(target) && !trigger.current?.contains(target)) setAt(null)
+    }
+    const dismiss = () => setAt(null)
+    document.addEventListener('pointerdown', away, true)
+    window.addEventListener('blur', dismiss)
+    window.addEventListener('resize', dismiss)
+    return () => {
+      document.removeEventListener('pointerdown', away, true)
+      window.removeEventListener('blur', dismiss)
+      window.removeEventListener('resize', dismiss)
+    }
+  }, [at])
+
+  const onMenuKey = (e: KeyboardEvent<HTMLDivElement>) => {
+    const list = [...(menu.current?.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]') ?? [])]
+    const i = list.indexOf(document.activeElement as HTMLButtonElement)
+    const next = { ArrowDown: i + 1, ArrowUp: i - 1, Home: 0, End: list.length - 1 }[e.key]
+    if (next !== undefined) list[(next + list.length) % list.length]?.focus()
+    else if (e.key === 'Escape') close(true)
+    else if (e.key === 'Tab') close(false)
+    else return
+    e.preventDefault()
+    e.stopPropagation()
+  }
+
+  return (
+    <>
+      <Button
+        ref={trigger}
+        aria-haspopup="menu"
+        aria-expanded={at !== null}
+        aria-label={`${t('browse.view')}: ${t(VIEW_TEXT[value])}`}
+        onClick={() => (at ? close(false) : open())}
+        onKeyDown={(e) => {
+          if (e.key === 'ArrowDown' && !at) {
+            e.preventDefault()
+            open()
+          }
+        }}
+        className="w-40 justify-between max-sm:w-full"
+      >
+        {t(VIEW_TEXT[value])}
+        <span className={`flex shrink-0 text-ink-2 transition-transform duration-150 ease-out motion-reduce:transition-none ${at ? '-rotate-90' : 'rotate-90'}`}>
+          <ChevronIcon />
+        </span>
+      </Button>
+      {at &&
+        createPortal(
+          <div
+            ref={menu}
+            role="menu"
+            aria-label={t('browse.view')}
+            onKeyDown={onMenuKey}
+            style={{ right: at.right, top: at.top }}
+            className="fixed z-50 flex w-40 origin-top-right flex-col rounded-card border border-card-edge bg-card p-1 text-body shadow-float enter-pop"
+          >
+            {VIEWS.map((v) => (
+              <button
+                key={v}
+                type="button"
+                role="menuitemradio"
+                aria-checked={v === value}
+                onClick={() => {
+                  close(true)
+                  onChange(v)
+                }}
+                className="flex h-8 cursor-pointer items-center justify-between gap-6 rounded-control px-3 text-left text-ink outline-none hover:bg-raised focus-visible:bg-raised"
+              >
+                {t(VIEW_TEXT[v])}
+                <span className={`flex shrink-0 text-accent ${v === value ? '' : 'invisible'}`}>
+                  <CheckIcon />
+                </span>
+              </button>
+            ))}
+          </div>,
+          document.body,
+        )}
+    </>
+  )
+}
+
+const EXPORT_CHOICES = [
+  { key: 'export.viewCsv', whole: false, format: 'csv' },
+  { key: 'export.viewJson', whole: false, format: 'json' },
+  { key: 'export.allCsv', whole: true, format: 'csv' },
+  { key: 'export.allJson', whole: true, format: 'json' },
+] as const
+
+/**
+ * The export menu: this view or the whole scan, as CSV or JSON. Works like the
+ * view picker; the save dialog opens after a choice.
+ */
+function ExportMenu({ onPick }: { onPick: (whole: boolean, format: ExportFormat) => void }) {
+  const { t } = useT()
+  const trigger = useRef<HTMLButtonElement>(null)
+  const menu = useRef<HTMLDivElement>(null)
+  const [at, setAt] = useState<{ right: number; top: number } | null>(null)
+
+  const open = () => {
+    const box = trigger.current?.getBoundingClientRect()
+    if (box) setAt({ right: window.innerWidth - box.right, top: box.bottom + 4 })
+  }
+  const close = (refocus: boolean) => {
+    setAt(null)
+    if (refocus) trigger.current?.focus()
+  }
+
+  useEffect(() => {
+    if (!at) return
+    menu.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus()
+    const away = (e: PointerEvent) => {
+      const target = e.target as Node
+      if (!menu.current?.contains(target) && !trigger.current?.contains(target)) setAt(null)
+    }
+    const dismiss = () => setAt(null)
+    document.addEventListener('pointerdown', away, true)
+    window.addEventListener('blur', dismiss)
+    window.addEventListener('resize', dismiss)
+    return () => {
+      document.removeEventListener('pointerdown', away, true)
+      window.removeEventListener('blur', dismiss)
+      window.removeEventListener('resize', dismiss)
+    }
+  }, [at])
+
+  const onMenuKey = (e: KeyboardEvent<HTMLDivElement>) => {
+    const list = [...(menu.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? [])]
+    const i = list.indexOf(document.activeElement as HTMLButtonElement)
+    const next = { ArrowDown: i + 1, ArrowUp: i - 1, Home: 0, End: list.length - 1 }[e.key]
+    if (next !== undefined) list[(next + list.length) % list.length]?.focus()
+    else if (e.key === 'Escape') close(true)
+    else if (e.key === 'Tab') close(false)
+    else return
+    e.preventDefault()
+    e.stopPropagation()
+  }
+
+  return (
+    <>
+      <Button
+        ref={trigger}
+        aria-haspopup="menu"
+        aria-expanded={at !== null}
+        onClick={() => (at ? close(false) : open())}
+        onKeyDown={(e) => {
+          if (e.key === 'ArrowDown' && !at) {
+            e.preventDefault()
+            open()
+          }
+        }}
+        className="justify-between gap-2 max-sm:flex-1"
+      >
+        {t('export.label')}
+        <span className={`flex shrink-0 text-ink-2 transition-transform duration-150 ease-out motion-reduce:transition-none ${at ? '-rotate-90' : 'rotate-90'}`}>
+          <ChevronIcon />
+        </span>
+      </Button>
+      {at &&
+        createPortal(
+          <div
+            ref={menu}
+            role="menu"
+            aria-label={t('export.label')}
+            onKeyDown={onMenuKey}
+            style={{ right: at.right, top: at.top }}
+            className="fixed z-50 flex min-w-56 origin-top-right flex-col rounded-card border border-card-edge bg-card p-1 text-body shadow-float enter-pop"
+          >
+            {EXPORT_CHOICES.map((c) => (
+              <button
+                key={c.key}
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  close(true)
+                  onPick(c.whole, c.format)
+                }}
+                className={`flex h-8 cursor-pointer items-center rounded-control px-3 text-left text-ink outline-none hover:bg-raised focus-visible:bg-raised ${c.key === 'export.allCsv' ? 'mt-1 border-t border-card-edge' : ''}`}
+              >
+                {t(c.key)}
+              </button>
+            ))}
+          </div>,
+          document.body,
+        )}
+    </>
   )
 }

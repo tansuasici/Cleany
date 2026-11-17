@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 /*
- * Tokens from ui/DESIGN_MAP.md → Tokens (direction A, "Döküm fişi").
+ * Tokens from ui/DESIGN_MAP.md → Tokens (direction A, "Döküm fişi", softened 2026-11-17).
  * The theme follows the system; `<html data-theme="light|dark">` forces one.
  */
 
@@ -19,6 +19,10 @@
   --c-edge: rgb(31 27 22 / 0.22);
   --c-edge-strong: rgb(31 27 22 / 0.5);
   --c-dialog-edge: rgb(31 27 22 / 0.12);
+  /* Cards and panels: a soft shadow in light, a faint edge in dark. */
+  --c-card-edge: transparent;
+  --c-shadow-card: 0 1px 2px rgb(31 27 22 / 0.06);
+  --c-shadow-float: 0 6px 16px -6px rgb(31 27 22 / 0.18);
   --c-shadow-dialog: 0 16px 40px -12px rgb(31 27 22 / 0.22);
   --c-accent: #2547b8;
   --c-on-accent: #fdfbf7;
@@ -47,6 +51,9 @@
     --c-edge: rgb(239 233 222 / 0.22);
     --c-edge-strong: rgb(239 233 222 / 0.4);
     --c-dialog-edge: rgb(239 233 222 / 0.16);
+    --c-card-edge: rgb(239 233 222 / 0.08);
+    --c-shadow-card: none;
+    --c-shadow-float: none;
     --c-shadow-dialog: none;
     --c-accent: #8ea6ff;
     --c-on-accent: #12110f;
@@ -74,6 +81,9 @@
   --c-edge: rgb(239 233 222 / 0.22);
   --c-edge-strong: rgb(239 233 222 / 0.4);
   --c-dialog-edge: rgb(239 233 222 / 0.16);
+  --c-card-edge: rgb(239 233 222 / 0.08);
+  --c-shadow-card: none;
+  --c-shadow-float: none;
   --c-shadow-dialog: none;
   --c-accent: #8ea6ff;
   --c-on-accent: #12110f;
@@ -99,6 +109,9 @@
   --color-edge: var(--c-edge);
   --color-edge-strong: var(--c-edge-strong);
   --color-dialog-edge: var(--c-dialog-edge);
+  --color-card-edge: var(--c-card-edge);
+  --shadow-card: var(--c-shadow-card);
+  --shadow-float: var(--c-shadow-float);
   --shadow-dialog: var(--c-shadow-dialog);
   --color-accent: var(--c-accent);
   --color-on-accent: var(--c-on-accent);
@@ -126,10 +139,10 @@
   --text-display: 40px;
   --text-display--line-height: 44px;
 
-  --radius-tag: 4px;
-  --radius-control: 6px;
-  --radius-card: 8px;
-  --radius-panel: 10px;
+  --radius-tag: 6px;
+  --radius-control: 8px;
+  --radius-card: 12px;
+  --radius-panel: 16px;
 
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
 }
@@ -148,6 +161,25 @@
     font-size: var(--text-body);
     line-height: var(--text-body--line-height);
     -webkit-font-smoothing: antialiased;
+  }
+
+  /* A thin pill on a clear track instead of the platform's grey gutter. */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    border: 3px solid transparent;
+    border-radius: 999px;
+    background-color: color-mix(in oklab, var(--c-ink-3) 45%, transparent);
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: var(--c-ink-3);
+  }
+  ::-webkit-scrollbar-corner {
+    background: transparent;
   }
 
   :focus-visible {
@@ -184,10 +216,10 @@
   background-repeat: repeat-x;
 }
 
-/* The subtotal rule of a receipt: 1px ink, 2px gap, 1px ink, above the total. */
+/* The subtotal rule of a receipt: one soft line above the total. */
 @utility rule-total {
-  height: 4px;
-  border-block: 1px solid var(--c-ink);
+  height: 0;
+  border-top: 1px solid var(--c-edge);
 }
 
 /* A size's unit (GB) after a mono figure: sans, smaller, quieter. */
@@ -196,4 +228,75 @@
   font-size: 0.6em;
   font-weight: 400;
   color: var(--c-ink-2);
+}
+
+/*
+ * DESIGN_MAP → Motion. One-shot entrances on the shared ease-out curve,
+ * transform and opacity only. Reduced motion keeps the fade and drops the
+ * movement; nothing loops.
+ */
+@keyframes enter-rise {
+  from {
+    opacity: 0;
+    transform: translateY(var(--enter-y, 6px));
+  }
+}
+@keyframes enter-fade {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes enter-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+}
+@keyframes enter-fill {
+  from {
+    transform: scaleX(0);
+  }
+}
+
+@utility enter-screen {
+  animation: enter-rise 180ms var(--ease-out) both;
+}
+@utility enter-view {
+  animation: enter-fade 120ms var(--ease-out) both;
+}
+@utility enter-items {
+  --enter-y: -4px;
+  animation: enter-rise 160ms var(--ease-out) both;
+}
+@utility enter-pop {
+  animation: enter-pop 180ms var(--ease-out) both;
+}
+@utility enter-fade {
+  animation: enter-fade 150ms var(--ease-out) both;
+}
+@utility enter-fill {
+  transform-origin: left;
+  animation: enter-fill 240ms var(--ease-out) both;
+}
+
+@layer base {
+  dialog[open] {
+    animation: enter-pop 180ms var(--ease-out) both;
+  }
+  dialog[open]::backdrop {
+    animation: enter-fade 150ms var(--ease-out) both;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .enter-screen,
+  .enter-items,
+  .enter-pop,
+  dialog[open] {
+    animation-name: enter-fade;
+    animation-duration: 120ms;
+  }
+  .enter-fill {
+    animation: none;
+  }
 }

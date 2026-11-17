@@ -1,8 +1,9 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import type { Locale } from '../lib/i18n'
+import { launchAtLogin, setLaunchAtLogin } from '../lib/ipc'
 import { useStore } from '../store'
 import { useT } from '../useT'
-import { Button } from './ui'
+import { Button, GearIcon, IconButton } from './ui'
 
 /** Each language names itself, so it is findable whatever the UI language. */
 const LOCALES: { code: Locale; name: string }[] = [
@@ -29,15 +30,15 @@ export function SettingsDialog() {
 
   return (
     <>
-      <button
+      <IconButton
         ref={button}
-        type="button"
+        label={t('settings.open')}
+        icon={<GearIcon />}
+        look="quiet"
+        align="end"
         aria-haspopup="dialog"
         onClick={() => setOpen(true)}
-        className="inline-flex h-8 items-center gap-1 rounded-control px-2 text-secondary font-medium text-ink-2 transition-[background-color,color] duration-150 ease-out hover:bg-raised hover:text-ink motion-reduce:transition-none"
-      >
-        {t('settings.open')}
-      </button>
+      />
       {open && <Settings onClose={() => setOpen(false)} />}
     </>
   )
@@ -53,6 +54,33 @@ function Settings({ onClose }: { onClose: () => void }) {
   const permanentId = useId()
   const noteId = useId()
   const removalId = useId()
+  const backgroundId = useId()
+  const loginId = useId()
+  const loginNoteId = useId()
+  // `null` until the OS answers; the checkbox waits for it.
+  const [login, setLogin] = useState<boolean | null>(null)
+  const [loginFailed, setLoginFailed] = useState(false)
+
+  useEffect(() => {
+    let live = true
+    launchAtLogin()
+      .then((on) => live && setLogin(on))
+      .catch(() => live && setLogin(false))
+    return () => {
+      live = false
+    }
+  }, [])
+
+  const toggleLogin = (on: boolean) => {
+    setLoginFailed(false)
+    setLogin(on)
+    setLaunchAtLogin(on)
+      .then(setLogin)
+      .catch(() => {
+        setLogin(!on)
+        setLoginFailed(true)
+      })
+  }
 
   useEffect(() => {
     const dialog = ref.current
@@ -111,6 +139,35 @@ function Settings({ onClose }: { onClose: () => void }) {
             <p id={noteId} className="text-body text-ink-2">
               {t('settings.permanentNote')}
             </p>
+          </div>
+        </div>
+      </section>
+      <section aria-labelledby={backgroundId} className="mt-6 border-t border-hairline pt-4">
+        <h3 id={backgroundId} className="text-secondary font-medium text-ink-2">
+          {t('settings.background')}
+        </h3>
+        <div className="mt-2 flex items-start gap-3">
+          <input
+            id={loginId}
+            type="checkbox"
+            checked={login ?? false}
+            disabled={login === null}
+            onChange={(e) => toggleLogin(e.target.checked)}
+            aria-describedby={loginNoteId}
+            className="mt-0.5 size-4 shrink-0 cursor-pointer accent-accent disabled:cursor-default"
+          />
+          <div className="flex flex-col gap-1">
+            <label htmlFor={loginId} className="cursor-pointer text-body text-ink">
+              {t('settings.login')}
+            </label>
+            <p id={loginNoteId} className="text-body text-ink-2">
+              {t('settings.loginNote')}
+            </p>
+            {loginFailed && (
+              <p role="status" className="text-body text-ink">
+                {t('settings.loginFailed')}
+              </p>
+            )}
           </div>
         </div>
       </section>
