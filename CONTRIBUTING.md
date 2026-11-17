@@ -76,6 +76,10 @@ pnpm --dir ui build
 
 We use [Conventional Commits](https://www.conventionalcommits.org/): `feat:`, `fix:`, `docs:`, `chore:`, `refactor:`, `test:`, `perf:`, `ci:`. PRs are squash-merged, so the PR title becomes the commit message.
 
+### Releases
+
+Every version ships with written release notes. Before a version is tagged, add a `## [x.y.z]` section to [CHANGELOG.md](CHANGELOG.md) in a PR. The release workflow uses that section as the body of the GitHub release and stops if it is missing.
+
 ## License
 
 Cleany is dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE).
