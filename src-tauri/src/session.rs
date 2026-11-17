@@ -2589,11 +2589,9 @@ mod tests {
         let head = out.head.unwrap();
         assert_eq!(head.scan_root, PathBuf::from("/r"));
         assert_eq!(head.scope_path, PathBuf::from("/r"));
-        let got: Vec<(String, u32)> = out
-            .rows
-            .iter()
-            .map(|r| (r.path.to_string_lossy().into_owned(), r.depth))
-            .collect();
+        // Compared as paths: Windows joins with `\`, and `Path` equality
+        // treats both separators alike.
+        let got: Vec<(PathBuf, u32)> = out.rows.iter().map(|r| (r.path.clone(), r.depth)).collect();
         let want = [
             ("/r", 0),
             ("/r/b", 1),
@@ -2601,7 +2599,7 @@ mod tests {
             ("/r/C/x", 2),
             ("/r/a", 1),
         ];
-        let want: Vec<(String, u32)> = want.iter().map(|&(p, d)| (p.to_owned(), d)).collect();
+        let want: Vec<(PathBuf, u32)> = want.iter().map(|&(p, d)| (PathBuf::from(p), d)).collect();
         assert_eq!(got, want);
     }
 
