@@ -25,6 +25,7 @@ use std::time::{Duration, Instant};
 
 use cleany_platform::{EntryKind, EntryMeta, read_entry_meta, read_meta};
 
+use crate::firmlinks;
 use crate::scan::{self, CancelToken, ScanError, ScanIssue, ScanOptions, entry_info};
 use crate::tree::{NodeId, NodeKind, Tree, TreeError};
 
@@ -199,6 +200,8 @@ pub struct DirRequest {
     is_root: bool,
     /// Names of the directory's subdirectories already in the tree.
     known_dirs: HashSet<OsString>,
+    /// The tree's root path, which decides the firmlink aliases to skip.
+    origin: PathBuf,
 }
 
 /// Prepares a refresh of the directory at `path`. `None` if `path` is not a
@@ -219,6 +222,7 @@ pub fn request(tree: &Tree, path: &Path, depth: Depth) -> Option<DirRequest> {
         depth,
         is_root: id == tree.root(),
         known_dirs,
+        origin: tree.path(tree.root())?,
     })
 }
 
@@ -259,6 +263,7 @@ pub fn read(req: DirRequest, opts: &ScanOptions, cancel: &CancelToken) -> DirUpd
         depth,
         is_root,
         known_dirs,
+        origin,
     } = req;
     let mut issues = Vec::new();
     // Below the root, apply the scanner's rules to the directory itself:
@@ -269,7 +274,11 @@ pub fn read(req: DirRequest, opts: &ScanOptions, cancel: &CancelToken) -> DirUpd
             Ok(meta) => {
                 let other_volume =
                     !opts.cross_mounts && opts.root_dev.is_some_and(|dev| dev != meta.dev);
-                if meta.kind != EntryKind::Dir || meta.placeholder || other_volume {
+                if meta.kind != EntryKind::Dir
+                    || meta.placeholder
+                    || other_volume
+                    || firmlinks::is_alias(&origin, &path)
+                {
                     return DirUpdate {
                         path,
                         read: Ok(Read::Outside),
@@ -287,20 +296,21 @@ pub fn read(req: DirRequest, opts: &ScanOptions, cancel: &CancelToken) -> DirUpd
         }
     }
     let read = match depth {
-        Depth::Subtree => match scan::scan(&path, opts, cancel, |_| {}) {
+        Depth::Subtree => match scan::scan_from(&path, &origin, opts, cancel, |_| {}) {
             Ok(res) => {
                 issues = res.issues;
                 Ok(Read::Subtree(res.tree))
             }
             Err(e) => Err(scan_error(e)),
         },
-        Depth::Shallow => read_shallow(&path, &known_dirs, opts, cancel, &mut issues),
+        Depth::Shallow => read_shallow(&path, &origin, &known_dirs, opts, cancel, &mut issues),
     };
     DirUpdate { path, read, issues }
 }
 
 fn read_shallow(
     path: &Path,
+    origin: &Path,
     known_dirs: &HashSet<OsString>,
     opts: &ScanOptions,
     cancel: &CancelToken,
@@ -313,6 +323,7 @@ fn read_shallow(
     let mut entries = Vec::new();
     let mut unreadable = HashSet::new();
     let mut subtrees = HashMap::new();
+    let aliases = firmlinks::aliases_below(origin, path);
     for entry in fs::read_dir(path)? {
         let entry = match entry {
             Ok(e) => e,
@@ -336,17 +347,19 @@ fn read_shallow(
                 continue;
             }
         };
-        // Same rules as the scanner: never list placeholders or other volumes.
+        // Same rules as the scanner: never list placeholders, other volumes
+        // or firmlink aliases.
         let descend = meta.kind == EntryKind::Dir
             && !meta.placeholder
             && (opts.cross_mounts || meta.dev == root_dev)
-            && !known_dirs.contains(&name);
+            && !known_dirs.contains(&name)
+            && !aliases.contains(&path.join(&name));
         if descend {
             let sub_opts = ScanOptions {
                 root_dev: Some(root_dev),
                 ..opts.clone()
             };
-            match scan::scan(&path.join(&name), &sub_opts, cancel, |_| {}) {
+            match scan::scan_from(&path.join(&name), origin, &sub_opts, cancel, |_| {}) {
                 Ok(res) => {
                     issues.extend(res.issues);
                     subtrees.insert(name.clone(), res.tree);
@@ -533,6 +546,45 @@ mod tests {
     };
     use std::path::{Path, PathBuf};
     use std::time::{Duration, Instant};
+
+    /// Refreshes below a scan that skipped a firmlink alias keep skipping
+    /// it: a subtree rescan of the alias's parent and a refresh of the alias
+    /// itself must not bring its files back a second time.
+    #[test]
+    fn refresh_keeps_firmlink_aliases_unentered() {
+        use crate::firmlinks::{Firmlink, override_table};
+        use crate::scan::{CancelToken, ScanOptions, scan};
+        use std::fs;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(tmp.path()).unwrap();
+        for dir in ["Users", "data/Users", "data/extra"] {
+            fs::create_dir_all(root.join(dir)).unwrap();
+            fs::write(root.join(dir).join("f.bin"), vec![1u8; 10_000]).unwrap();
+        }
+        let alias = root.join("data/Users");
+        let _table = override_table(vec![Firmlink {
+            source: root.join("Users"),
+            alias: alias.clone(),
+        }]);
+        let opts = ScanOptions::default();
+        let cancel = CancelToken::new();
+        let mut tree = scan(&root, &opts, &cancel, |_| {}).unwrap().tree;
+        let files = |tree: &crate::Tree| tree.node(tree.root()).unwrap().file_count();
+        assert_eq!(files(&tree), 2);
+
+        for (dir, depth) in [
+            (root.join("data"), Depth::Subtree),
+            (root.join("data"), Depth::Shallow),
+            (alias.clone(), Depth::Shallow),
+            (alias.clone(), Depth::Subtree),
+        ] {
+            super::refresh_dir(&mut tree, &dir, depth, &opts, &cancel).unwrap();
+            assert_eq!(files(&tree), 2, "{} {depth:?}", dir.display());
+            let id = tree.lookup(&alias).unwrap();
+            assert_eq!(tree.children(id).count(), 0);
+        }
+    }
 
     fn dirs(plan: RefreshPlan) -> Vec<(PathBuf, Depth)> {
         match plan {
