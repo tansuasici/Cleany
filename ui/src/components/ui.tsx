@@ -125,7 +125,8 @@ export function LeaderRow({
 }
 
 /**
- * Fullness bar, 20 tall. `used` fills the track; `parts` (largest items
+ * Fullness bar, 20 tall. `used` fills a faint hairline track, so the free
+ * space stays visible as the unfilled rest; `parts` (largest items
  * first) split the filled part, 2px apart so each reads as its own block.
  */
 export function UsageBar({
@@ -146,7 +147,7 @@ export function UsageBar({
     <div
       role="img"
       aria-label={label}
-      className="flex h-5 w-full gap-0.5 overflow-hidden rounded-tag bg-raised"
+      className="flex h-5 w-full gap-0.5 overflow-hidden rounded-tag bg-hairline"
     >
       {parts.map((bytes, i) => (
         <span key={i} className="h-full shrink-0 bg-ink-2" style={{ width: `${pct(bytes)}%` }} />

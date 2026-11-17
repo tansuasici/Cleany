@@ -3,6 +3,7 @@ import {
   type DiskAccess,
   type NodeEntry,
   type NodeKind,
+  type ScanEvent,
   type ScanId,
   type ScanSummary,
   type VolumeEntry,
@@ -39,7 +40,25 @@ export type TopItems =
   | { status: 'error' }
 
 /** A finished scan; it stays openable until the next scan starts. */
-export type DoneScreen = { kind: 'done'; target: Target; summary: ScanSummary; top: TopItems }
+export type DoneScreen = {
+  kind: 'done'
+  target: Target
+  summary: ScanSummary
+  top: TopItems
+  /** Bumped each time disk changes are patched into the tree; views read it again. */
+  revision: number
+  /** Too much changed on disk to keep up; the result is shown as it was. */
+  outdated: boolean
+}
+
+const finished = (target: Target, summary: ScanSummary): DoneScreen => ({
+  kind: 'done',
+  target,
+  summary,
+  top: { status: 'loading' },
+  revision: 0,
+  outdated: false,
+})
 
 /** The tree table, open at `node` (a folder) of a finished scan. */
 export type BrowseScreen = { kind: 'browse'; done: DoneScreen; node: NodeEntry }
@@ -283,6 +302,8 @@ export const useStore = create<State>()((set, get) => ({
 
     try {
       const scan = await startScan(target.path, false, (event) => {
+        // Keyed by scan id: `last` keeps updating after going back to the volumes.
+        if (live(event)) return
         if (!current()) return
         switch (event.event) {
           case 'progress': {
@@ -293,7 +314,7 @@ export const useStore = create<State>()((set, get) => ({
             return
           }
           case 'done': {
-            const done: DoneScreen = { kind: 'done', target, summary: event.summary, top: { status: 'loading' } }
+            const done = finished(target, event.summary)
             saveTarget(event.summary.scan, target)
             set({ screen: done, last: done })
             void loadTop(target, event.summary)
@@ -326,7 +347,7 @@ export const useStore = create<State>()((set, get) => ({
     const gen = generation
     let summary: ScanSummary | null
     try {
-      summary = await attachScan()
+      summary = await attachScan(live)
     } catch {
       // Nothing to reopen; the volumes screen stays.
       return
@@ -334,7 +355,7 @@ export const useStore = create<State>()((set, get) => ({
     // A scan started, or the user left the volumes, while the reply was on its way.
     if (!summary || gen !== generation || get().screen.kind !== 'volumes') return
     const target = savedTarget(summary)
-    const done: DoneScreen = { kind: 'done', target, summary, top: { status: 'loading' } }
+    const done = finished(target, summary)
     set({ screen: done, last: done })
     void loadTop(target, summary)
   },
@@ -482,13 +503,47 @@ function record(history: History | null, scan: ScanId, node: NodeEntry): History
   return { scan, entries: [...h.entries.slice(0, h.at + 1), node], at: h.at + 1 }
 }
 
+/**
+ * Applies a live update (`changed`, `outdated`) to the finished scan it
+ * belongs to, on show or kept in `last`. Returns `false` for other events.
+ */
+function live(event: ScanEvent): boolean {
+  if (event.event !== 'changed' && event.event !== 'outdated') return false
+  const { screen, last } = useStore.getState()
+  const shown = screen.kind === 'done' ? screen : screen.kind === 'browse' ? screen.done : null
+  // `last` holds the latest `top`; the table's copy may be older.
+  const done = last?.summary.scan === event.scan ? last : shown
+  if (done?.summary.scan !== event.scan) return true
+  const scan = event.scan
+  const fresh: DoneScreen =
+    event.event === 'changed'
+      ? // `top` keeps showing until `loadTop` replaces it.
+        { ...done, summary: { ...done.summary, root: event.root }, revision: event.revision }
+      : { ...done, outdated: true }
+  useStore.setState({
+    screen:
+      screen.kind === 'done' && screen.summary.scan === scan
+        ? fresh
+        : screen.kind === 'browse' && screen.done.summary.scan === scan
+          ? { ...screen, done: fresh }
+          : screen,
+    last: last?.summary.scan === scan ? fresh : last,
+  })
+  if (event.event === 'changed') {
+    void loadTop(done.target, fresh.summary)
+    void useStore.getState().refreshBasket(scan)
+  }
+  return true
+}
+
 async function loadTop(target: Target, summary: ScanSummary) {
-  // Keyed by scan id, not generation: the result also lands in `last` when the
-  // user has already gone back to the volumes.
+  // Keyed by the summary, not generation: the result also lands in `last` when
+  // the user has already gone back to the volumes, and a reply for a tree that
+  // has since changed again is dropped for the newer one.
   const set = (top: TopItems) =>
     useStore.setState(({ screen, last }) => ({
-      screen: screen.kind === 'done' && screen.summary.scan === summary.scan ? { ...screen, top } : screen,
-      last: last?.summary.scan === summary.scan ? { ...last, top } : last,
+      screen: screen.kind === 'done' && screen.summary === summary ? { ...screen, top } : screen,
+      last: last?.summary === summary ? { ...last, top } : last,
     }))
   try {
     const page = await getChildren(summary.scan, summary.root.id, 'allocated', 'desc', 0, TOP_ITEMS)

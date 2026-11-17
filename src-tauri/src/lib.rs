@@ -72,10 +72,17 @@ fn cancel_scan(sessions: tauri::State<'_, Sessions>, scan: ScanId) -> Result<(),
 }
 
 /// The current scan's summary if it finished, so a reloaded webview can
-/// reopen it without scanning again. `None` otherwise.
+/// reopen it without scanning again. `None` otherwise. Live updates of that
+/// scan (`changed`, `outdated`) go to `on_event` from then on.
 #[tauri::command]
-fn attach_scan(sessions: tauri::State<'_, Sessions>) -> Option<ScanSummary> {
-    sessions.attach()
+fn attach_scan(
+    sessions: tauri::State<'_, Sessions>,
+    on_event: Channel<ScanEvent>,
+) -> Option<ScanSummary> {
+    sessions.attach(move |event| {
+        // The webview may be gone; the next attach brings a new channel.
+        let _ = on_event.send(event);
+    })
 }
 
 /// One sorted page of a node's children.

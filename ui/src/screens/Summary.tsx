@@ -179,6 +179,8 @@ type Children =
 /** A folder's largest children, fetched while `open`. */
 function useChildren(scanId: ScanId, id: number, open: boolean): Children | null {
   const [children, setChildren] = useState<{ id: number; value: Children } | null>(null)
+  // Read again when disk changes are patched in; the old list shows meanwhile.
+  const revision = useStore((s) => (s.last?.summary.scan === scanId ? s.last.revision : 0))
   useEffect(() => {
     if (!open) return
     let live = true
@@ -189,7 +191,7 @@ function useChildren(scanId: ScanId, id: number, open: boolean): Children | null
     return () => {
       live = false
     }
-  }, [scanId, id, open])
+  }, [scanId, id, open, revision])
   if (!open) return null
   return children?.id === id ? children.value : { status: 'loading' }
 }

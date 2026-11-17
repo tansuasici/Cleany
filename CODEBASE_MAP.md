@@ -56,6 +56,7 @@ Existing tools are platform-specific, slow on large disks, or unsafe when deleti
 | `crates/cleany-core/src/lib.rs` | Core data types |
 | `crates/cleany-core/src/refresh.rs` | Live updates: event coalescer and in-place shallow/subtree refresh of a finished scan (ADR-0006) |
 | `crates/cleany-platform/src/watch.rs` | Live change notifications below a scan root (macOS FSEvents via `notify`; other OSes unsupported), paths mapped back to the root's spelling (ADR-0006) |
+| `src-tauri/src/session/live.rs` | Live session loop: one thread per scan feeds watcher changes through the `Coalescer`, refreshes the finished tree and emits `changed` / `outdated` on the scan's channel (ADR-0006) |
 | `crates/cleany-platform/src/protected.rs` | Per-OS list of folders never trashed (`/System`, `C:\Windows`, `~/Library`…) |
 | `src-tauri/src/deletion_log.rs` | Deletion log: one JSON line per trash attempt, `deletions.jsonl` in the app log folder |
 
