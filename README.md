@@ -1,8 +1,5 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg">
-    <img src="assets/logo.svg" alt="Cleany" width="220">
-  </picture>
+  <img src="assets/icon.svg" alt="Cleany" width="128">
 </p>
 
 <h3 align="center">See where your disk space went. Clean up what you don't need, safely.</h3>
