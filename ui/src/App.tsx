@@ -10,6 +10,7 @@ import { VolumesScreen } from './screens/Volumes'
 import { type BrowseScreen, type Screen, useStore } from './store'
 import { useT } from './useT'
 import { useTrail } from './useTrail'
+import { ExportStatus } from './screens/ExportStatus'
 
 export default function App() {
   const { t, locale } = useT()
@@ -65,6 +66,7 @@ export default function App() {
 
       <main className="flex min-h-0 flex-1 flex-col overflow-auto [scrollbar-gutter:stable]">
         <Outdated screen={screen} />
+        <ExportStatus />
         {/* Keyed by kind: a new screen enters once, moving between folders does not. */}
         <div key={screen.kind} className="flex min-h-0 flex-1 flex-col enter-screen">
           {screen.kind === 'volumes' && <VolumesScreen />}

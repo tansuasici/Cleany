@@ -17,7 +17,7 @@ use tauri::ipc::Channel;
 
 use access::{AccessError, DiskAccess};
 use actions::ActionError;
-use export::{ExportError, ExportReport, Format};
+use export::{ExportError, ExportEvent, ExportReport, Exports, Format};
 use session::{
     ChildrenPage, ExportScope, LargestEntry, LargestKind, NodeEntry, ScanEvent, ScanId,
     ScanSummary, SessionError, Sessions, SortKey, SortOrder, SunburstSlice, TrashReport,
@@ -230,14 +230,18 @@ fn delete_nodes(
 
 /// Asks where to save, then writes `scope` of the scan there as `format`.
 /// `None` when the user closes the save dialog. The dialog runs here, so the
-/// path never passes through the webview.
+/// path never passes through the webview. Once writing starts, `on_event`
+/// gets the file name and then the rows written, a few times a second;
+/// `cancel_export` stops it and removes the partial file.
 #[tauri::command(async)]
 fn export_scan(
     app: tauri::AppHandle,
     sessions: tauri::State<'_, Sessions>,
+    exports: tauri::State<'_, Exports>,
     scan: ScanId,
     scope: ExportScope,
     format: Format,
+    on_event: Channel<ExportEvent>,
 ) -> Result<Option<ExportReport>, ExportError> {
     use tauri_plugin_dialog::DialogExt;
 
@@ -259,7 +263,37 @@ fn export_scan(
     let path = chosen.into_path().map_err(|e| ExportError::Dialog {
         message: e.to_string(),
     })?;
-    export::write_file(&sessions, scan, scope, format, &path, now).map(Some)
+    exports.begin();
+    let file_name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    // The window may be gone; the export still finishes.
+    let _ = on_event.send(ExportEvent::Started { file_name });
+    let progress = exports.reporter(|p| {
+        let _ = on_event.send(ExportEvent::Progress {
+            rows: p.rows,
+            total: p.total,
+        });
+    });
+    let report = export::write_file(&sessions, scan, scope, format, &path, now, progress)?;
+    exports.finished(path);
+    Ok(Some(report))
+}
+
+/// Stops the running export at its next batch; it then fails with
+/// `cancelled` and leaves no file behind.
+#[tauri::command]
+fn cancel_export(exports: tauri::State<'_, Exports>) {
+    exports.cancel();
+}
+
+/// Shows the file the last successful export wrote in Finder / Explorer /
+/// the file manager. `gone` when nothing was exported in this run.
+#[tauri::command(async)]
+fn reveal_export(exports: tauri::State<'_, Exports>) -> Result<(), ActionError> {
+    let path = exports.last().ok_or(ActionError::Gone)?;
+    Ok(cleany_platform::shell::reveal(&path)?)
 }
 
 /// Best-effort macOS Full Disk Access status; `notApplicable` elsewhere.
@@ -305,6 +339,7 @@ pub fn run() {
                 .build(),
         )
         .manage(Sessions::default())
+        .manage(Exports::default())
         .setup(|app| {
             tray::install(app.handle())?;
             if std::env::args().any(|a| a == tray::HIDDEN_ARG)
@@ -343,6 +378,8 @@ pub fn run() {
             trash_nodes,
             delete_nodes,
             export_scan,
+            cancel_export,
+            reveal_export,
             disk_access,
             open_disk_access_settings,
             set_tray_locale,

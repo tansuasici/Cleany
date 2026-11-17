@@ -344,11 +344,31 @@ export type ExportError =
   | { kind: 'notReady' }
   | { kind: 'unknownNode' }
   | { kind: 'io'; message: string }
+  | { kind: 'cancelled' }
   | { kind: 'dialog'; message: string }
 
+/** What a running export reports: the chosen file once writing starts, then rows written. `total` is an upper bound, or `null` when unknown. */
+export type ExportEvent =
+  | { kind: 'started'; fileName: string }
+  | { kind: 'progress'; rows: number; total: number | null }
+
 /**
- * Asks where to save, then writes `scope` there as `format`. `null` when the
- * save dialog is closed without a choice.
+ * Asks where to save, then writes `scope` there as `format`, reporting
+ * through `onEvent`. `null` when the save dialog is closed without a choice.
  */
-export const exportScan = (scan: ScanId, scope: ExportScope, format: ExportFormat) =>
-  invoke<ExportReport | null>('export_scan', { scan, scope, format })
+export function exportScan(
+  scan: ScanId,
+  scope: ExportScope,
+  format: ExportFormat,
+  onEvent: (event: ExportEvent) => void,
+) {
+  const channel = new Channel<ExportEvent>()
+  channel.onmessage = onEvent
+  return invoke<ExportReport | null>('export_scan', { scan, scope, format, onEvent: channel })
+}
+
+/** Stops the running export. It then fails with `cancelled` and leaves no file behind. */
+export const cancelExport = () => invoke<void>('cancel_export')
+
+/** Shows the last exported file in Finder / Explorer / the file manager. */
+export const revealExport = () => invoke<void>('reveal_export')
