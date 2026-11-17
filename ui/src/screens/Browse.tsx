@@ -1,4 +1,4 @@
-import { type KeyboardEvent, useCallback, useEffect, useRef, useState } from 'react'
+import { type KeyboardEvent, useCallback, useEffect, useEffectEvent, useRef, useState } from 'react'
 import { Button, ChevronIcon, LeaderRow, ShareBar } from '../components/ui'
 import { formatBytes, formatCount, formatDate, formatShare, truncateMiddle } from '../lib/format'
 import {
@@ -212,8 +212,11 @@ export function BrowseView({ screen }: { screen: BrowseScreen }) {
     return { status, alert: alerts.join(' ') }
   }
 
-  /** Back to the folder on show, or the nearest one above it that is still in the tree. */
-  const settle = async () => {
+  /**
+   * Back to the folder on show (with its new size), or the nearest one above
+   * it that is still in the tree. Returns `false` when it had to leave it.
+   */
+  const settle = async (): Promise<boolean> => {
     const chain = [node, ...(trail ?? []).slice(0, -1).reverse()]
     for (const folder of chain) {
       try {
@@ -222,13 +225,29 @@ export function BrowseView({ screen }: { screen: BrowseScreen }) {
         if (!fresh) continue
         if (fresh.id !== node.id) setCameFrom(null)
         browse(fresh)
-        return
+        return fresh.id === node.id
       } catch {
         // Taken out of the tree; try the folder above.
       }
     }
     showSummary()
+    return false
   }
+
+  // Disk changes were patched into the tree: the views read it again on their
+  // own (`revision`); the folder on show may have changed size or be gone.
+  const revision = done.revision
+  const followed = useRef(revision)
+  const follow = useEffectEvent(() => {
+    void settle().then((stayed) => {
+      if (!stayed) setNote({ status: t('browse.folderGone'), alert: '' })
+    })
+  })
+  useEffect(() => {
+    if (followed.current === revision) return
+    followed.current = revision
+    follow()
+  }, [revision])
 
   const confirmTrash = async () => {
     if (!asking) return
@@ -355,6 +374,7 @@ export function BrowseView({ screen }: { screen: BrowseScreen }) {
           key={rev}
           scan={scan}
           node={node}
+          revision={done.revision}
           label={t('browse.tableLabel', { name })}
           sort={sort}
           cameFrom={cameFrom}
@@ -370,6 +390,7 @@ export function BrowseView({ screen }: { screen: BrowseScreen }) {
           key={rev}
           scan={scan}
           node={node}
+          revision={done.revision}
           label={t('browse.mapLabel', { name })}
           cameFrom={cameFrom}
           onOpen={open}
@@ -382,6 +403,7 @@ export function BrowseView({ screen }: { screen: BrowseScreen }) {
           key={rev}
           scan={scan}
           node={node}
+          revision={done.revision}
           name={name}
           label={t('browse.ringsLabel', { name })}
           canGoUp={parent !== undefined}
@@ -451,33 +473,42 @@ const emptyPages = (key: string): Pages => ({ key, pages: {}, total: null, faile
  * Children of `node` in `sort` order, fetched a page at a time. A new folder
  * or sort starts empty; replies for an older key are dropped.
  */
-function usePages(scan: ScanId, node: number, sort: Sort) {
+function usePages(scan: ScanId, node: number, sort: Sort, revision: number) {
   const key = `${scan}:${node}:${sort.key}:${sort.order}`
   const [state, setState] = useState(() => emptyPages(key))
   if (state.key !== key) setState(emptyPages(key))
   const current = state.key === key ? state : emptyPages(key)
-  // Pages requested for the current key; a failed one is removed for retry.
-  // Scoped to the key, so coming back to a folder fetches it again.
-  const requested = useRef({ key, pages: new Set<number>() })
+  // Pages requested for the current key and tree revision; a failed one is
+  // removed for retry. Scoped to the key, so coming back to a folder fetches
+  // it again; a newer revision fetches the pages again while the old rows
+  // stay on show.
+  const requested = useRef({ key, revision, pages: new Set<number>() })
 
   const load = useCallback(
     (page: number) => {
-      if (requested.current.key !== key) requested.current = { key, pages: new Set() }
-      const asked = requested.current.pages
+      if (requested.current.key !== key || requested.current.revision !== revision) {
+        requested.current = { key, revision, pages: new Set() }
+      }
+      const round = requested.current
+      const asked = round.pages
       if (asked.has(page)) return
       asked.add(page)
+      // A reply for an older folder, sort or revision is dropped.
+      const fresh = () => requested.current === round
       getChildren(scan, node, sort.key, sort.order, page * PAGE, PAGE).then(
-        (res) =>
+        (res) => {
+          if (!fresh()) return
           setState((s) =>
             s.key === key ? { ...s, total: res.total, pages: { ...s.pages, [page]: res.items } } : s,
-          ),
+          )
+        },
         () => {
           asked.delete(page)
-          setState((s) => (s.key === key ? { ...s, failed: true } : s))
+          if (fresh()) setState((s) => (s.key === key ? { ...s, failed: true } : s))
         },
       )
     },
-    [key, scan, node, sort.key, sort.order],
+    [key, revision, scan, node, sort.key, sort.order],
   )
 
   const retry = () => setState((s) => ({ ...s, failed: false }))
@@ -489,6 +520,7 @@ function usePages(scan: ScanId, node: number, sort: Sort) {
 function Table({
   scan,
   node,
+  revision,
   label,
   sort,
   cameFrom,
@@ -501,6 +533,8 @@ function Table({
 }: {
   scan: ScanId
   node: NodeEntry
+  /** The tree's revision; a newer one reads the rows again. */
+  revision: number
   label: string
   sort: Sort
   cameFrom: number | null
@@ -513,7 +547,7 @@ function Table({
   basketIds: readonly number[]
 }) {
   const { t, locale } = useT()
-  const { pages, load, retry, row } = usePages(scan, node.id, sort)
+  const { pages, load, retry, row } = usePages(scan, node.id, sort, revision)
   const viewport = useRef<HTMLDivElement>(null)
   const grid = useRef<HTMLDivElement>(null)
   const [scrollTop, setScrollTop] = useState(0)
