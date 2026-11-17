@@ -5,6 +5,7 @@
 //! [`refresh`], the treemap layout in [`mod@treemap`] and the
 //! sunburst layout in [`mod@sunburst`].
 
+mod firmlinks;
 mod names;
 pub mod refresh;
 pub mod scan;

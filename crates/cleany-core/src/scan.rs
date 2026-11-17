@@ -5,7 +5,9 @@
 //! node ids and queues the subdirectories it finds. Links and junctions are
 //! recorded but never followed; mount points are not crossed unless asked.
 //! Hard-linked files are counted once (at their smallest path), and cloud
-//! placeholder directories are recorded but never listed.
+//! placeholder directories are recorded but never listed. On macOS, a
+//! firmlinked folder's second path under `/System/Volumes/Data` is recorded
+//! but not entered when the scan also holds its source (see `firmlinks`).
 
 use std::collections::HashMap;
 use std::ffi::OsString;
@@ -22,6 +24,7 @@ use cleany_platform::{EntryKind, EntryMeta, read_entry_meta, read_meta};
 use thiserror::Error;
 
 use crate::Size;
+use crate::firmlinks;
 use crate::tree::{EntryInfo, NodeFlags, NodeId, NodeKind, Tree, TreeBuilder, TreeError};
 
 /// Minimum time between two progress callbacks (at most 10 per second).
@@ -100,7 +103,9 @@ pub struct ScanStats {
     pub symlinks: u64,
     /// Sockets, FIFOs, devices.
     pub others: u64,
-    /// Directories on another device that were recorded but not entered.
+    /// Directories that were recorded but not entered: on another device,
+    /// or (macOS) the `/System/Volumes/Data/...` path of a firmlinked folder
+    /// the scan already enters at its source (`/Users`, `/Applications`).
     pub skipped_mounts: u64,
     /// Further hard links to a file already counted; they add no bytes.
     pub hardlinks: u64,
@@ -176,20 +181,40 @@ pub fn scan<F>(
 where
     F: FnMut(&Progress),
 {
-    scan_with(root, opts, cancel, on_progress, list_dir)
+    scan_from(root, root, opts, cancel, on_progress)
 }
 
-/// [`scan`] with the directory lister as a parameter (a seam for tests).
-fn scan_with<F, L>(
+/// [`scan`] of `root` as part of an earlier scan rooted at `origin` (a
+/// subtree refresh), so firmlink aliases are skipped as in that scan.
+pub(crate) fn scan_from<F>(
+    root: &Path,
+    origin: &Path,
+    opts: &ScanOptions,
+    cancel: &CancelToken,
+    on_progress: F,
+) -> Result<ScanResult, ScanError>
+where
+    F: FnMut(&Progress),
+{
+    scan_with(root, opts, cancel, on_progress, list_dir, |walk| {
+        firmlinks::aliases_below(origin, walk)
+    })
+}
+
+/// [`scan`] with the directory lister and the directories not to enter
+/// (given the walk root) as parameters (seams for tests).
+fn scan_with<F, L, S>(
     root: &Path,
     opts: &ScanOptions,
     cancel: &CancelToken,
     mut on_progress: F,
     lister: L,
+    skip: S,
 ) -> Result<ScanResult, ScanError>
 where
     F: FnMut(&Progress),
     L: Fn(&Path) -> io::Result<DirRead> + Send + Sync + 'static,
+    S: FnOnce(&Path) -> Vec<PathBuf>,
 {
     let start = Instant::now();
     if cancel.is_cancelled() {
@@ -214,6 +239,7 @@ where
         allocated: 0,
         links: HashMap::new(),
         root_dev,
+        skip: skip(&walk_root),
     };
     let root_id = state.tree.root();
     state.record(root_id, &meta);
@@ -274,6 +300,9 @@ struct Builder {
     links: HashMap<(u64, u64), Vec<NodeId>>,
     /// See [`ScanOptions::root_dev`].
     root_dev: u64,
+    /// Directories recorded but not entered (firmlink aliases), spelled
+    /// like the paths the walk builds.
+    skip: Vec<PathBuf>,
 }
 
 impl Builder {
@@ -338,10 +367,15 @@ impl Builder {
             if meta.kind == EntryKind::Dir {
                 if meta.placeholder {
                     // Listing a dataless directory can start a download.
-                } else if cross_mounts || meta.dev == self.root_dev {
-                    subdirs.push((id, path.join(&name)));
-                } else {
+                } else if !cross_mounts && meta.dev != self.root_dev {
                     self.stats.skipped_mounts += 1;
+                } else {
+                    let sub = path.join(&name);
+                    if self.skip.contains(&sub) {
+                        self.stats.skipped_mounts += 1;
+                    } else {
+                        subdirs.push((id, sub));
+                    }
                 }
             }
         }
@@ -494,6 +528,7 @@ impl Throttle {
 #[cfg(test)]
 mod tests {
     use super::{CancelToken, DirRead, PROGRESS_INTERVAL, ScanError, ScanOptions, Throttle};
+    use std::fs;
     use std::path::Path;
     use std::sync::{Mutex, mpsc};
     use std::thread;
@@ -523,8 +558,14 @@ mod tests {
         let scan_cancel = cancel.clone();
         thread::spawn(move || {
             let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-            let result =
-                super::scan_with(root, &ScanOptions::default(), &scan_cancel, |_| {}, lister);
+            let result = super::scan_with(
+                root,
+                &ScanOptions::default(),
+                &scan_cancel,
+                |_| {},
+                lister,
+                |_| Vec::new(),
+            );
             let _ = done_tx.send(result.map(|_| ()));
         });
 
@@ -539,6 +580,35 @@ mod tests {
         assert!(cancelled_at.elapsed() < Duration::from_secs(2));
         assert!(matches!(result, Err(ScanError::Cancelled)));
         drop(release_tx);
+    }
+
+    /// A folder reachable at two paths (here two copies standing in for a
+    /// firmlink's source and alias) is counted once, at the source; the
+    /// alias is recorded without children and counted as skipped.
+    #[test]
+    fn firmlink_alias_is_recorded_but_not_entered() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        for dir in ["Users", "data/Users", "data/extra"] {
+            fs::create_dir_all(root.join(dir)).unwrap();
+            fs::write(root.join(dir).join("f.bin"), vec![1u8; 10_000]).unwrap();
+        }
+        let alias = root.join("data/Users");
+        let skip = {
+            let alias = alias.clone();
+            move |_: &Path| vec![alias]
+        };
+        let opts = ScanOptions::default();
+        let cancel = CancelToken::new();
+        let res = super::scan_with(root, &opts, &cancel, |_| {}, super::list_dir, skip).unwrap();
+        let plain = super::scan(root, &opts, &cancel, |_| {}).unwrap();
+
+        let id = res.tree.lookup(&alias).expect("alias is recorded");
+        assert_eq!(res.tree.children(id).count(), 0);
+        assert_eq!(res.stats.skipped_mounts, 1);
+        assert_eq!(res.stats.files, 2);
+        assert_eq!(plain.stats.files, 3);
+        assert!(res.tree.lookup(&root.join("data/extra/f.bin")).is_some());
     }
 
     #[test]
