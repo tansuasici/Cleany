@@ -5,62 +5,58 @@
   </picture>
 </p>
 
-<h3 align="center">Diskinizdeki yerin nereye gittiğini görün, gereksiz olanı güvenle temizleyin.</h3>
+<h3 align="center">See where your disk space went. Clean up what you don't need, safely.</h3>
 
 <p align="center">
-  macOS, Windows ve Linux için ücretsiz ve açık kaynak disk alanı aracı.
+  A free, open source disk space tool for macOS, Windows and Linux.
 </p>
 
 <p align="center">
-  <a href="https://github.com/tansuasici/Cleany/releases/latest"><b>Cleany'yi indirin</b></a>
+  <a href="https://github.com/tansuasici/Cleany/releases/latest"><b>Download Cleany</b></a>
 </p>
 
-<!-- [PLACEHOLDER] Ekran görüntüsü: Gözat ekranında Harita görünümü, açık ve koyu tema. -->
+<!-- [PLACEHOLDER] Screenshot: the Map view on Browse, light and dark theme. -->
 
-## Ne işe yarar
+## What it does
 
-Disk dolduğunda asıl soru şudur: yer nereye gitti? Cleany bir diski ya da klasörü tarar ve her klasörün kapladığı alanı büyükten küçüğe gösterir. Neyin yer kapladığını görür, ne yapacağınıza siz karar verirsiniz.
+When your disk fills up, the real question is where the space went. Cleany scans a drive or a folder and shows how much space every folder takes, largest first. You see what is taking up room and you decide what to do with it.
 
-## Öne çıkanlar
+## Highlights
 
-**Diskinizi üç farklı açıdan görün.** Klasörleri boyuta göre sıralanmış bir tabloda, kutularla çizilmiş bir haritada ya da iç içe halkalarda inceleyin. Bir klasöre tıklayarak içine girin, geri ve ileri düğmeleriyle dolaşın.
+**Three ways to look at your disk.** Explore folders in a table sorted by size, in a map drawn as nested boxes, or in rings. Click a folder to open it and move back and forward through your history.
 
-**En büyük dosyaları tek listede bulun.** Bir klasörün altındaki en büyük dosya ve klasörler, ne kadar derinde olurlarsa olsunlar tek bir listede toplanır.
+**The largest files in one list.** The largest files and folders under a folder are collected in a single list, however deep they sit.
 
-**Silmeden önce sepete ekleyin.** Temizlemek istediklerinizi sepette toplayın ve kaç bayt boşalacağını önceden görün.
+**Collect first, then clean.** Add what you want to remove to the selection basket and see how much space it will free before you do anything.
 
-**Güvenle temizleyin.** Seçtikleriniz önce Çöp Sepeti'ne taşınır, fikrinizi değiştirirseniz geri alabilirsiniz. İşletim sisteminin kendi klasörleri korunur ve silinemez. Her silme işlemi bilgisayarınızdaki bir kayıt dosyasına yazılır. Kalıcı silme isteğe bağlıdır, ayarlardan açılır ve her seferinde yazılı onay ister.
+**Clean up safely.** Items go to the Trash first, so you can restore them if you change your mind. Folders that belong to the operating system are protected and cannot be removed. Every removal is written to a log file on your computer. Permanent deletion is optional, turned on in Settings, and asks you to type a confirmation each time.
 
-**Doğru sayılar.** Sabit bağlantılar bir kez sayılır. Buluttaki dosyaların yalnızca yer tutucuları diskte yer kaplamadığı için toplama eklenmez. macOS'ta sistem klasörleri iki kez sayılmaz.
+**Numbers you can trust.** Hard links are counted once. Cloud files that are only placeholders take no space on disk, so they are not added to the total. On macOS, system folders that appear in two places are counted once.
 
-**Tarama açıkken değişiklikleri görün.** macOS'ta bir dosya silindiğinde ya da eklendiğinde görünüm kendini günceller, yeniden taramanız gerekmez.
+**Changes show up while you look.** On macOS the view updates when a file is added or removed, so you don't need to scan again.
 
-**Sonuçları dışa aktarın.** Bir taramayı ya da bir klasörü CSV veya JSON olarak kaydedin. Dışa aktarma sürerken ilerlemeyi görür ve dilediğiniz an durdurabilirsiniz.
+**Export the results.** Save a scan or a single folder as CSV or JSON. While the export runs you see its progress and can stop it at any time.
 
-**İşinizi kolaylaştıran ayrıntılar.** Bir öğeyi Finder'da ya da dosya yöneticisinde gösterin, açın, yolunu kopyalayın veya o klasörde bir uçbirim açın. Pencereyi kapattığınızda Cleany menü çubuğunda çalışmaya devam edebilir. Arayüz Türkçe ve İngilizce kullanılabilir.
+**Small things that help.** Reveal an item in Finder or your file manager, open it, copy its path, or open a terminal in that folder. When you close the window, Cleany can keep running in the menu bar. The interface is available in English and Turkish.
 
-## İndirme
+## Download
 
-Son sürümü [Releases](https://github.com/tansuasici/Cleany/releases/latest) sayfasından indirin.
+Get the latest version from the [Releases](https://github.com/tansuasici/Cleany/releases/latest) page.
 
-| Sistem | Dosya |
+| System | File |
 |---|---|
-| macOS 11 ve sonrası (Apple Silicon ve Intel) | `.dmg` |
-| Windows 10 ve 11 | `.exe` kurulum dosyası veya `.msi` |
-| Linux | `.AppImage`, `.deb` veya `.rpm` |
+| macOS 11 or later (Apple Silicon and Intel) | `.dmg` |
+| Windows 10 and 11 | `.exe` installer or `.msi` |
+| Linux | `.AppImage`, `.deb` or `.rpm` |
 
-**macOS:** Uygulama Apple tarafından imzalanmış ve onaylanmıştır. Bütün diski taramak için ilk açılışta Cleany'ye Tam Disk Erişimi vermeniz istenir. Uygulama sizi ilgili ayara yönlendirir.
+**macOS:** The app is signed and notarized by Apple. To scan your whole disk, Cleany asks for Full Disk Access on first launch and takes you to the right setting.
 
-**Windows:** Kurulum dosyası henüz imzalı değildir. Windows bir uyarı gösterirse “Ek bilgi” ve ardından “Yine de çalıştır” seçeneğine tıklayın.
+**Windows:** The installer is not signed yet. If Windows shows a warning, click “More info” and then “Run anyway”.
 
-## English
+## Contributing
 
-Cleany shows where your disk space went and helps you clean it up safely. It scans a drive or folder and lists every folder by size, as a sorted table, a treemap or rings. Collect what you want to remove in a basket and see how much space it frees. Deleted items go to the Trash first and system folders are protected. Cleany runs on macOS, Windows and Linux and its interface is available in English and Turkish. Download it from the [Releases](https://github.com/tansuasici/Cleany/releases/latest) page.
+Cleany is open source and contributions are welcome. Before you start, read the [contributing guide](CONTRIBUTING.md), the [code of conduct](CODE_OF_CONDUCT.md) and the [security policy](SECURITY.md). The app is built with [Tauri 2](https://tauri.app). The scanning core is written in Rust and the interface in React and TypeScript.
 
-## Katkıda bulunun
+## License
 
-Cleany açık kaynaktır ve katkılarınızı bekler. Başlamadan önce [katkı rehberini](CONTRIBUTING.md), [davranış kurallarını](CODE_OF_CONDUCT.md) ve [güvenlik politikasını](SECURITY.md) okuyun. Uygulama [Tauri 2](https://tauri.app) ile yazılmıştır. Tarama çekirdeği Rust, arayüz React ve TypeScript ile geliştirilmiştir.
-
-## Lisans
-
-Cleany, [MIT](LICENSE-MIT) veya [Apache 2.0](LICENSE-APACHE) lisansından dilediğiniz biriyle kullanılabilir.
+Cleany is available under your choice of the [MIT](LICENSE-MIT) or [Apache 2.0](LICENSE-APACHE) license.
