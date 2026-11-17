@@ -28,6 +28,13 @@ export function SettingsDialog() {
     wasOpen.current = open
   }, [open])
 
+  // "Settings…" (Cmd+,) in the macOS app menu.
+  useEffect(() => {
+    const show = () => setOpen(true)
+    window.addEventListener('cleany:open-settings', show)
+    return () => window.removeEventListener('cleany:open-settings', show)
+  }, [])
+
   return (
     <>
       <IconButton

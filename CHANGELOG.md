@@ -18,7 +18,7 @@ The first public release of Cleany for macOS, Windows and Linux.
 - Items go to the Trash first, so you can restore them.
 - Folders that belong to the operating system are protected and cannot be removed.
 - Every removal is written to a log file on your computer.
-- Permanent deletion is optional. It is turned on in Settings and asks you to type a confirmation each time.
+- Permanent deletion is optional. It is turned on in Settings and asks for confirmation each time.
 
 ### Accurate numbers
 - Hard links are counted once.
@@ -29,6 +29,7 @@ The first public release of Cleany for macOS, Windows and Linux.
 - Export a scan or a single folder as CSV or JSON, with progress and the option to stop.
 - Reveal an item in Finder or your file manager, open it, copy its path, or open a terminal in that folder.
 - Cleany can keep running in the menu bar when you close the window.
+- On macOS, Settings also opens from the app menu or with Cmd+,.
 - On macOS, Cleany guides you to grant Full Disk Access on first launch.
 - The interface is available in English and Turkish.
 

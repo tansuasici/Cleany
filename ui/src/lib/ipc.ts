@@ -306,7 +306,7 @@ export const trashNodes = (scan: ScanId, nodes: number[]) => invoke<TrashReport>
 /**
  * Deletes the nodes from disk for good, skipping the trash, and takes them out
  * of the scan tree. Never asks: the UI offers it only when Settings allow it
- * and asks for a typed confirmation. Same report as `trashNodes`.
+ * and asks for confirmation. Same report as `trashNodes`.
  */
 export const deleteNodes = (scan: ScanId, nodes: number[]) => invoke<TrashReport>('delete_nodes', { scan, nodes })
 

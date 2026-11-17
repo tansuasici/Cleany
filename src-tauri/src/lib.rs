@@ -2,6 +2,8 @@
 
 mod access;
 mod actions;
+#[cfg(target_os = "macos")]
+mod app_menu;
 mod deletion_log;
 mod export;
 mod session;
@@ -211,7 +213,7 @@ fn trash_nodes(
 
 /// Deletes the nodes from disk for good, skipping the trash, and reports
 /// what happened to each. The UI offers it only when the user turned it on
-/// in Settings and asks for a typed confirmation; this command never asks.
+/// in Settings and asks for confirmation; this command never asks.
 /// Every attempt is written to the deletion log.
 #[tauri::command(async)]
 fn delete_nodes(
@@ -308,10 +310,12 @@ fn open_disk_access_settings() -> Result<(), AccessError> {
     access::open_settings()
 }
 
-/// Relabels the menu bar menu in the UI's language.
+/// Relabels the menu bar menu and the app menu in the UI's language.
 #[tauri::command]
 fn set_tray_locale(app: tauri::AppHandle, locale: tray::Locale) {
     tray::set_locale(&app, locale);
+    #[cfg(target_os = "macos")]
+    app_menu::set_locale(&app, locale);
 }
 
 /// Whether Cleany starts at login.
@@ -342,6 +346,8 @@ pub fn run() {
         .manage(Exports::default())
         .setup(|app| {
             tray::install(app.handle())?;
+            #[cfg(target_os = "macos")]
+            app_menu::install(app.handle())?;
             if std::env::args().any(|a| a == tray::HIDDEN_ARG)
                 && let Some(window) = app.get_webview_window(tray::MAIN_WINDOW)
             {

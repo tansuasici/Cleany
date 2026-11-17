@@ -124,7 +124,7 @@ pub fn trash(
 
 /// Deletes `nodes` from disk for good, skipping the trash, and takes them
 /// out of the scan tree. Same checks, report and log as [`trash`]; the UI
-/// asks for a typed confirmation first.
+/// asks for confirmation first.
 pub fn delete(
     sessions: &Sessions,
     scan: ScanId,
