@@ -8,7 +8,7 @@ Security issues: please **do not** open a public issue — see [SECURITY.md](SEC
 ## Before you start
 
 - **Bugs**: open an issue with the bug template (OS, Cleany version, steps to reproduce).
-- **Features / larger changes**: open an issue first so we can agree on the approach before you write code. The roadmap lives in [docs/PLAN.md](docs/PLAN.md) and decisions in [tasks/decisions.md](tasks/decisions.md).
+- **Features / larger changes**: open an issue first so we can agree on the approach before you write code.
 - **Small fixes** (typos, docs, obvious bugs): a PR is fine directly.
 
 ## Development setup
