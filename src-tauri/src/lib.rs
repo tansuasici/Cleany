@@ -183,6 +183,25 @@ fn trash_nodes(
     actions::trash(&sessions, scan, &nodes, log_dir.as_deref())
 }
 
+/// Deletes the nodes from disk for good, skipping the trash, and reports
+/// what happened to each. The UI offers it only when the user turned it on
+/// in Settings and asks for a typed confirmation; this command never asks.
+/// Every attempt is written to the deletion log.
+#[tauri::command(async)]
+fn delete_nodes(
+    app: tauri::AppHandle,
+    sessions: tauri::State<'_, Sessions>,
+    scan: ScanId,
+    nodes: Vec<u32>,
+) -> Result<TrashReport, ActionError> {
+    let log_dir = app
+        .path()
+        .app_log_dir()
+        .inspect_err(|e| eprintln!("cleany: deletion log: no log folder: {e}"))
+        .ok();
+    actions::delete(&sessions, scan, &nodes, log_dir.as_deref())
+}
+
 /// Best-effort macOS Full Disk Access status; `notApplicable` elsewhere.
 #[tauri::command(async)]
 fn disk_access() -> DiskAccess {
@@ -216,6 +235,7 @@ pub fn run() {
             open_node,
             get_path,
             trash_nodes,
+            delete_nodes,
             disk_access,
             open_disk_access_settings
         ])

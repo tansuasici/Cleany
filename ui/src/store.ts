@@ -127,6 +127,8 @@ interface State {
   access: DiskAccess | null
   /** The user put the Full Disk Access panel aside ("Şimdilik geç"). */
   accessDismissed: boolean
+  /** Settings allow deleting without the trash; off until the user turns it on. */
+  permanentDelete: boolean
   volumes: Volumes
   screen: Screen
   /** Keyed by mount point. */
@@ -142,6 +144,7 @@ interface State {
   /** Re-checks Full Disk Access; run at start and whenever the window regains focus. */
   checkAccess: () => Promise<void>
   dismissAccess: () => void
+  setPermanentDelete: (on: boolean) => void
   loadVolumes: () => Promise<void>
   scan: (target: Target) => Promise<void>
   /**
@@ -209,6 +212,16 @@ function initialAccessDismissed(): boolean {
   }
 }
 
+const PERMANENT_DELETE_KEY = 'cleany.permanentDelete'
+
+function initialPermanentDelete(): boolean {
+  try {
+    return localStorage.getItem(PERMANENT_DELETE_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
 const TARGET_KEY = 'cleany.target'
 
 /** Remembers what a finished scan was of; the backend knows only its path. */
@@ -249,6 +262,7 @@ export const useStore = create<State>()((set, get) => ({
   locale: initialLocale(),
   access: null,
   accessDismissed: initialAccessDismissed(),
+  permanentDelete: initialPermanentDelete(),
   volumes: { status: 'loading' },
   screen: { kind: 'volumes' },
   breakdowns: {},
@@ -282,6 +296,16 @@ export const useStore = create<State>()((set, get) => ({
       // Not persisting the choice is acceptable.
     }
     set({ accessDismissed: true })
+  },
+
+  setPermanentDelete: (on) => {
+    try {
+      if (on) localStorage.setItem(PERMANENT_DELETE_KEY, '1')
+      else localStorage.removeItem(PERMANENT_DELETE_KEY)
+    } catch {
+      // Not persisting the choice is acceptable; it holds for this session.
+    }
+    set({ permanentDelete: on })
   },
 
   loadVolumes: async () => {

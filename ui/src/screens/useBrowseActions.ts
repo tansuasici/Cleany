@@ -129,3 +129,22 @@ export function trashKey(mac: boolean, ask: () => void) {
     if (!e.repeat) ask()
   }
 }
+
+/**
+ * ⌥⌘⌫ on macOS, Shift+Delete elsewhere: asks to delete the target for good.
+ * Bound beside `trashKey`; the caller binds it only while Settings allow it.
+ */
+export function deleteKey(mac: boolean, ask: () => void) {
+  return (e: KeyboardEvent<HTMLElement>) => {
+    const el = e.target as HTMLElement
+    if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable) return
+    if (el.closest('dialog')) return
+    const hit = mac
+      ? e.key === 'Backspace' && e.metaKey && e.altKey && !e.ctrlKey && !e.shiftKey
+      : e.key === 'Delete' && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey
+    if (!hit) return
+    e.preventDefault()
+    e.stopPropagation()
+    if (!e.repeat) ask()
+  }
+}

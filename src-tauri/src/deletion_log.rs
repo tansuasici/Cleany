@@ -25,14 +25,15 @@ const MAX_BYTES: u64 = 5 * 1024 * 1024;
 struct Line<'a> {
     /// UTC, RFC 3339 to the second.
     time: &'a str,
-    /// What was asked: `trash` here; permanent delete (#31) adds `delete`.
+    /// What was asked: `trash` or `delete`.
     action: &'static str,
     /// The item's path; non-UTF-8 bytes become U+FFFD.
     path: Option<String>,
     kind: &'static str,
-    /// `trashed`, `gone`, `protected` or `failed`.
+    /// `trashed`, `deleted`, `gone`, `protected` or `failed`.
     outcome: &'static str,
-    /// Where it went: the OS trash. The OS does not say where inside it.
+    /// Where it went: `osTrash` (the OS does not say where inside it) or
+    /// `permanent` for a delete that skips the trash.
     to: &'static str,
     /// Logical bytes, as the scan saw them.
     logical: u64,
@@ -42,18 +43,37 @@ struct Line<'a> {
     message: Option<&'a str>,
 }
 
-/// Appends one line per trash attempt to the log in `dir`, creating the
-/// folder when needed and rolling the file over past [`MAX_BYTES`].
+/// How a request removed its items.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Removal {
+    /// Moved to the OS trash.
+    Trash,
+    /// Deleted for good, without the trash.
+    Delete,
+}
+
+impl Removal {
+    /// The `action` and `to` fields of a [`Line`].
+    const fn names(self) -> (&'static str, &'static str) {
+        match self {
+            Self::Trash => ("trash", "osTrash"),
+            Self::Delete => ("delete", "permanent"),
+        }
+    }
+}
+
+/// Appends one line per attempt to the log in `dir`, creating the folder
+/// when needed and rolling the file over past [`MAX_BYTES`].
 ///
 /// # Errors
 /// Any I/O error; the caller reports it and carries on, since the items
-/// were already moved.
-pub fn append_trash(dir: &Path, deletions: &[Deletion]) -> io::Result<()> {
-    append_at(dir, deletions, &rfc3339(SystemTime::now()))
+/// were already removed.
+pub fn append(dir: &Path, removal: Removal, deletions: &[Deletion]) -> io::Result<()> {
+    append_at(dir, removal, deletions, &rfc3339(SystemTime::now()))
 }
 
-/// [`append_trash`] with the time given, for tests.
-fn append_at(dir: &Path, deletions: &[Deletion], time: &str) -> io::Result<()> {
+/// [`append`] with the time given, for tests.
+fn append_at(dir: &Path, removal: Removal, deletions: &[Deletion], time: &str) -> io::Result<()> {
     if deletions.is_empty() {
         return Ok(());
     }
@@ -62,15 +82,16 @@ fn append_at(dir: &Path, deletions: &[Deletion], time: &str) -> io::Result<()> {
     if fs::metadata(&path).is_ok_and(|m| m.len() >= MAX_BYTES) {
         fs::rename(&path, dir.join(OLD_FILE_NAME))?;
     }
+    let (action, to) = removal.names();
     let mut text = String::new();
     for d in deletions {
         let line = Line {
             time,
-            action: "trash",
+            action,
             path: d.path.as_ref().map(|p| p.to_string_lossy().into_owned()),
             kind: kind_name(d.kind),
             outcome: outcome_name(&d.outcome),
-            to: "osTrash",
+            to,
             logical: d.freed.logical,
             allocated: d.freed.allocated,
             message: match &d.outcome {
@@ -102,6 +123,7 @@ const fn kind_name(kind: NodeKind) -> &'static str {
 const fn outcome_name(outcome: &TrashOutcome) -> &'static str {
     match outcome {
         TrashOutcome::Trashed => "trashed",
+        TrashOutcome::Deleted => "deleted",
         TrashOutcome::Gone => "gone",
         TrashOutcome::Protected => "protected",
         TrashOutcome::Failed { .. } => "failed",
@@ -139,7 +161,7 @@ const fn civil_from_days(days: u64) -> (u64, u64, u64) {
 
 #[cfg(test)]
 mod tests {
-    use super::{FILE_NAME, MAX_BYTES, OLD_FILE_NAME, append_at, rfc3339};
+    use super::{FILE_NAME, MAX_BYTES, OLD_FILE_NAME, Removal, append_at, rfc3339};
     use crate::session::{Deletion, Freed, TrashOutcome};
     use cleany_core::NodeKind;
     use std::fs;
@@ -180,9 +202,16 @@ mod tests {
         let failed = TrashOutcome::Failed {
             message: "denied".to_owned(),
         };
-        append_at(&dir, &[deletion("/r/a", TrashOutcome::Trashed)], "T1").unwrap();
         append_at(
             &dir,
+            Removal::Trash,
+            &[deletion("/r/a", TrashOutcome::Trashed)],
+            "T1",
+        )
+        .unwrap();
+        append_at(
+            &dir,
+            Removal::Trash,
             &[
                 deletion("/r/b", TrashOutcome::Protected),
                 deletion("/r/c", failed),
@@ -190,7 +219,7 @@ mod tests {
             "T2",
         )
         .unwrap();
-        append_at(&dir, &[], "T3").unwrap();
+        append_at(&dir, Removal::Trash, &[], "T3").unwrap();
         let text = fs::read_to_string(dir.join(FILE_NAME)).unwrap();
         let lines: Vec<serde_json::Value> = text
             .lines()
@@ -212,13 +241,37 @@ mod tests {
     }
 
     #[test]
+    fn deletes_are_logged_as_permanent() {
+        let dir = scratch("delete");
+        append_at(
+            &dir,
+            Removal::Delete,
+            &[deletion("/r/a", TrashOutcome::Deleted)],
+            "T",
+        )
+        .unwrap();
+        let text = fs::read_to_string(dir.join(FILE_NAME)).unwrap();
+        let line: serde_json::Value = serde_json::from_str(text.trim_end()).unwrap();
+        assert_eq!(line["action"], "delete");
+        assert_eq!(line["outcome"], "deleted");
+        assert_eq!(line["to"], "permanent");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn rolls_over_past_the_cap() {
         let dir = scratch("roll");
         fs::create_dir_all(&dir).unwrap();
         let big = vec![b'x'; usize::try_from(MAX_BYTES).unwrap()];
         fs::write(dir.join(FILE_NAME), &big).unwrap();
         fs::write(dir.join(OLD_FILE_NAME), b"older").unwrap();
-        append_at(&dir, &[deletion("/r/a", TrashOutcome::Gone)], "T").unwrap();
+        append_at(
+            &dir,
+            Removal::Trash,
+            &[deletion("/r/a", TrashOutcome::Gone)],
+            "T",
+        )
+        .unwrap();
         assert_eq!(
             fs::metadata(dir.join(OLD_FILE_NAME)).unwrap().len(),
             MAX_BYTES
@@ -234,7 +287,15 @@ mod tests {
         fs::create_dir_all(dir.parent().unwrap()).unwrap();
         // A file where the folder should be.
         fs::write(&dir, b"").unwrap();
-        assert!(append_at(&dir, &[deletion("/r/a", TrashOutcome::Trashed)], "T").is_err());
+        assert!(
+            append_at(
+                &dir,
+                Removal::Trash,
+                &[deletion("/r/a", TrashOutcome::Trashed)],
+                "T"
+            )
+            .is_err()
+        );
         fs::remove_file(&dir).unwrap();
     }
 }
