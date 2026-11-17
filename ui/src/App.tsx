@@ -42,7 +42,7 @@ export default function App() {
 
   return (
     <div className="flex h-full flex-col">
-      <header className="flex h-12 shrink-0 items-center gap-3 border-b border-hairline bg-card px-4 max-sm:gap-2 max-sm:px-3">
+      <header className="flex h-12 shrink-0 items-center gap-3 bg-page px-4 max-sm:gap-2 max-sm:px-3">
         <button
           type="button"
           onClick={showVolumes}
@@ -61,14 +61,16 @@ export default function App() {
         </div>
       </header>
 
-      <Outdated screen={screen} />
-
-      <main className="min-h-0 flex-1 overflow-auto [scrollbar-gutter:stable]">
-        {screen.kind === 'volumes' && <VolumesScreen />}
-        {screen.kind === 'scanning' && <ScanningScreen screen={screen} />}
-        {screen.kind === 'done' && <SummaryScreen screen={screen} />}
-        {screen.kind === 'browse' && <BrowseView screen={screen} />}
-        {(screen.kind === 'cancelled' || screen.kind === 'failed') && <EndedScreen screen={screen} />}
+      <main className="flex min-h-0 flex-1 flex-col overflow-auto [scrollbar-gutter:stable]">
+        <Outdated screen={screen} />
+        {/* Keyed by kind: a new screen enters once, moving between folders does not. */}
+        <div key={screen.kind} className="flex min-h-0 flex-1 flex-col enter-screen">
+          {screen.kind === 'volumes' && <VolumesScreen />}
+          {screen.kind === 'scanning' && <ScanningScreen screen={screen} />}
+          {screen.kind === 'done' && <SummaryScreen screen={screen} />}
+          {screen.kind === 'browse' && <BrowseView screen={screen} />}
+          {(screen.kind === 'cancelled' || screen.kind === 'failed') && <EndedScreen screen={screen} />}
+        </div>
       </main>
     </div>
   )
@@ -83,7 +85,7 @@ function Outdated({ screen }: { screen: Screen }) {
   return (
     <div
       role="status"
-      className="flex shrink-0 items-center gap-3 border-b border-hairline bg-raised px-4 py-2 max-sm:px-3"
+      className="mx-4 mt-4 flex shrink-0 items-center gap-3 rounded-card bg-raised py-2 pr-2 pl-4 enter-fade max-sm:mx-3"
     >
       <p className="min-w-0 flex-1 text-secondary text-ink-2">{t('live.outdated')}</p>
       <Button onClick={() => void scan(done.target)}>{t('retry')}</Button>

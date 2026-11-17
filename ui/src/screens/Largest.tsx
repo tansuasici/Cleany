@@ -1,13 +1,13 @@
 import { type KeyboardEvent, useEffect, useRef, useState } from 'react'
-import { ChevronIcon } from '../components/ui'
+import { ChevronIcon, EmptyLine, Segmented, SkeletonRows } from '../components/ui'
 import { formatBytes, truncateMiddle } from '../lib/format'
 import { type LargestEntry, type LargestKind, type NodeEntry, type ScanId, getLargest } from '../lib/ipc'
 import { useLater } from '../useLater'
 import { useT } from '../useT'
-import type { ActionTarget } from './useBrowseActions'
+import { type ActionTarget, type MenuAt, menuPoint } from './useBrowseActions'
 
 /** How many rows the list shows (docs/PLAN.md §M5). */
-const LIMIT = 100
+export const LIMIT = 100
 /** DESIGN_MAP → Spacing: a list row is 32 tall, as in the table. */
 const ROW = 32
 /** Names longer than this are cut in the middle; the full name is in the footer and the tooltip. */
@@ -39,6 +39,8 @@ export function Largest({
   onUp,
   onExit,
   onSelect,
+  onMenu,
+  hint,
 }: {
   scan: ScanId
   node: NodeEntry
@@ -51,6 +53,10 @@ export function Largest({
   onUp: () => void
   onExit: () => void
   onSelect: (target: ActionTarget | null) => void
+  /** Opens the item menu for the item just selected. */
+  onMenu: (at: MenuAt) => void
+  /** The short key hint shown at the right of the footer. */
+  hint: string
 }) {
   const { t, locale } = useT()
   const key = `${scan}:${node.id}:${kind}`
@@ -163,21 +169,12 @@ export function Largest({
 
   return (
     <div className="mt-4 flex min-h-0 flex-1 flex-col">
-      <div role="group" aria-label={t('browse.largestKind')} className="flex gap-1 self-start rounded-control border border-hairline bg-card p-0.5">
-        {KINDS.map((k) => (
-          <button
-            key={k}
-            type="button"
-            aria-pressed={kind === k}
-            onClick={() => onKind(k)}
-            className={`h-7 rounded-tag px-3 text-secondary transition-[background-color,color] duration-150 ease-out ${
-              kind === k ? 'bg-raised text-ink' : 'text-ink-2 hover:text-ink'
-            }`}
-          >
-            {t(KIND_TEXT[k])}
-          </button>
-        ))}
-      </div>
+      <Segmented
+        label={t('browse.largestKind')}
+        options={KINDS.map((k) => ({ key: k, text: t(KIND_TEXT[k]) }))}
+        value={kind}
+        onChange={onKind}
+      />
 
       <div
         ref={grid}
@@ -187,7 +184,10 @@ export function Largest({
         aria-rowcount={count + 1}
         aria-activedescendant={selected ? `largest-row-${at}` : undefined}
         onKeyDown={onKeyDown}
-        className="group mt-2 flex min-h-0 flex-1 flex-col rounded-panel border border-hairline bg-card focus-visible:border-accent focus-visible:outline-none"
+        onContextMenu={(e) => {
+          if (e.target === e.currentTarget && selected) onMenu(menuPoint(e))
+        }}
+        className="group mt-2 flex min-h-0 flex-1 flex-col rounded-panel border border-card-edge bg-card shadow-card focus-visible:border-accent focus-visible:outline-none"
       >
         <div role="row" aria-rowindex={1} className={`${cols} h-8 shrink-0 items-center border-b border-hairline text-secondary text-ink-2`}>
           <span role="columnheader">{t('browse.name')}</span>
@@ -219,11 +219,10 @@ export function Largest({
                 {t('volumes.retry')}
               </button>
             </p>
-          ) : rows === null || count === 0 ? (
-            // One status line for loading and empty, so the empty result is announced too.
-            <p role="status" className="px-3 py-2 text-ink-2">
-              {rows === null ? slow && t('browse.loading') : t('browse.largestEmpty')}
-            </p>
+          ) : rows === null ? (
+            slow && <SkeletonRows label={t('browse.loading')} />
+          ) : count === 0 ? (
+            <EmptyLine text={t('browse.largestEmpty')} action={t('browse.goUp')} onAction={onUp} />
           ) : (
             rows.map((r, i) => {
               const e = r.entry
@@ -237,6 +236,11 @@ export function Largest({
                   onClick={() => {
                     setActive(i)
                     if (opens(e)) onOpen(e)
+                  }}
+                  onContextMenu={(ev) => {
+                    ev.preventDefault()
+                    setActive(i)
+                    onMenu(menuPoint(ev))
                   }}
                   className={`${cols} h-8 cursor-pointer items-center rounded-control text-body ${
                     // Keyboard focus sits on the grid; the ring goes on the active row, where the eye is.
@@ -262,11 +266,11 @@ export function Largest({
                       <span className="text-ink-3">{t('browse.largestHere')}</span>
                     )}
                   </span>
-                  <span role="gridcell" className="text-right font-mono tabular-nums">
+                  <span role="gridcell" className="text-right tabular-nums">
                     {formatBytes(r.own, locale)}
                   </span>
                   {dirs && (
-                    <span role="gridcell" className={`${wide} text-right font-mono text-secondary text-ink-3 tabular-nums`}>
+                    <span role="gridcell" className={`${wide} text-right text-secondary text-ink-3 tabular-nums`}>
                       {formatBytes(e.allocated, locale)}
                     </span>
                   )}
@@ -277,13 +281,14 @@ export function Largest({
         </div>
 
         {/* The selected name in full; the row already says it to a screen reader. */}
-        <p aria-hidden className="flex h-8 shrink-0 items-center border-t border-hairline px-4 text-meta text-ink-2">
+        <div className="flex h-8 shrink-0 items-center gap-3 px-4 text-meta text-ink-2">
           {selected && (
-            <bdi className="min-w-0 truncate" title={selected.name}>
+            <bdi aria-hidden className="min-w-0 truncate" title={selected.name}>
               {selected.name}
             </bdi>
           )}
-        </p>
+          <span className="ml-auto shrink-0 text-ink-3 max-md:hidden">{hint}</span>
+        </div>
       </div>
     </div>
   )

@@ -47,9 +47,9 @@ export function VolumesScreen() {
           <p className="text-ink-2">{t('volumes.empty')}</p>
         )}
         {volumes.status === 'ready' && volumes.list.length > 0 && (
-          <ul className="divide-y divide-hairline border-y border-hairline">
+          <ul className="flex flex-col gap-3">
             {ordered(volumes.list).map((v, i, list) => (
-              <li key={v.mount}>
+              <li key={v.mount} className="rounded-panel border border-card-edge bg-card shadow-card">
                 {/* One primary per screen: the open breakdown if there is one, else the first volume. */}
                 <VolumeRow
                   volume={v}
@@ -82,7 +82,7 @@ function AccessPanel() {
   }
 
   return (
-    <section aria-labelledby="access-title" className="mt-8 rounded-panel border border-hairline bg-card p-6">
+    <section aria-labelledby="access-title" className="mt-8 rounded-panel border border-card-edge bg-card p-6 shadow-card">
       <h2 id="access-title" className="text-strong font-medium">
         {t('access.title')}
       </h2>
@@ -109,6 +109,9 @@ function AccessPanel() {
 
 /** How many of the last scan's items the card names under its bar. */
 const CARD_ITEMS = 3
+/** Blocks in the bar: the largest items, each at least 1% of the volume. */
+const MAX_PARTS = 12
+const MIN_PART_SHARE = 0.01
 
 /**
  * One volume. Its mount point shows only when another volume has the same
@@ -129,7 +132,7 @@ function VolumeRow({ volume, primary, showMount }: { volume: VolumeEntry; primar
   const start = () => void scan({ path: volume.mount, name, used, free: volume.available })
 
   return (
-    <article aria-label={name} className="flex flex-col gap-4 py-6">
+    <article aria-label={name} className="flex flex-col gap-4 p-6 max-sm:p-4">
       <div className="flex items-start gap-3">
         <span className="mt-0.5 text-ink-2">
           <VolumeIcon />
@@ -189,8 +192,15 @@ function VolumeRow({ volume, primary, showMount }: { volume: VolumeEntry; primar
         <UsageBar
           total={volume.total}
           used={used}
-          parts={breakdown?.items.map((i) => i.allocated)}
+          parts={breakdown?.items
+            .filter((i) => i.allocated >= volume.total * MIN_PART_SHARE)
+            .slice(0, MAX_PARTS)
+            .map((i) => ({ name: i.name, bytes: i.allocated }))}
           label={usage}
+          restName={t('volumes.barRest')}
+          usedName={t('volumes.barUsed')}
+          freeName={t('volumes.barFree')}
+          format={bytes}
         />
         {breakdown && (
           <>

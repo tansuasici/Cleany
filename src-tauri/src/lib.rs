@@ -3,6 +3,7 @@
 mod access;
 mod actions;
 mod deletion_log;
+mod export;
 mod session;
 mod volumes;
 
@@ -15,9 +16,11 @@ use tauri::ipc::Channel;
 
 use access::{AccessError, DiskAccess};
 use actions::ActionError;
+use export::{ExportError, ExportReport, Format};
 use session::{
-    ChildrenPage, LargestEntry, LargestKind, NodeEntry, ScanEvent, ScanId, ScanSummary,
-    SessionError, Sessions, SortKey, SortOrder, SunburstSlice, TrashReport, TreemapSlice,
+    ChildrenPage, ExportScope, LargestEntry, LargestKind, NodeEntry, ScanEvent, ScanId,
+    ScanSummary, SessionError, Sessions, SortKey, SortOrder, SunburstSlice, TrashReport,
+    TreemapSlice,
 };
 use volumes::VolumeEntry;
 
@@ -167,6 +170,16 @@ fn open_node(
     actions::open(&sessions, scan, node)
 }
 
+/// Opens a terminal in the node, or in its folder if it is not a folder.
+#[tauri::command(async)]
+fn open_terminal(
+    sessions: tauri::State<'_, Sessions>,
+    scan: ScanId,
+    node: u32,
+) -> Result<(), ActionError> {
+    actions::open_terminal(&sessions, scan, node)
+}
+
 /// The node's full path, for the clipboard.
 #[tauri::command(async)]
 fn get_path(
@@ -214,6 +227,40 @@ fn delete_nodes(
     actions::delete(&sessions, scan, &nodes, log_dir.as_deref())
 }
 
+/// Asks where to save, then writes `scope` of the scan there as `format`.
+/// `None` when the user closes the save dialog. The dialog runs here, so the
+/// path never passes through the webview.
+#[tauri::command(async)]
+fn export_scan(
+    app: tauri::AppHandle,
+    sessions: tauri::State<'_, Sessions>,
+    scan: ScanId,
+    scope: ExportScope,
+    format: Format,
+) -> Result<Option<ExportReport>, ExportError> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let scope_path = sessions.path(scan, scope.node())?;
+    let scope_name = scope_path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let now = std::time::SystemTime::now();
+    let Some(chosen) = app
+        .dialog()
+        .file()
+        .set_file_name(export::default_name(&scope_name, format, now))
+        .add_filter(format.label(), &[format.extension()])
+        .blocking_save_file()
+    else {
+        return Ok(None);
+    };
+    let path = chosen.into_path().map_err(|e| ExportError::Dialog {
+        message: e.to_string(),
+    })?;
+    export::write_file(&sessions, scan, scope, format, &path, now).map(Some)
+}
+
 /// Best-effort macOS Full Disk Access status; `notApplicable` elsewhere.
 #[tauri::command(async)]
 fn disk_access() -> DiskAccess {
@@ -232,6 +279,7 @@ fn open_disk_access_settings() -> Result<(), AccessError> {
 /// Never by design: a startup failure is reported on stderr and the process exits non-zero.
 pub fn run() {
     let result = tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(Sessions::default())
         .invoke_handler(tauri::generate_handler![
             app_info,
@@ -246,9 +294,11 @@ pub fn run() {
             get_sunburst,
             reveal_node,
             open_node,
+            open_terminal,
             get_path,
             trash_nodes,
             delete_nodes,
+            export_scan,
             disk_access,
             open_disk_access_settings
         ])

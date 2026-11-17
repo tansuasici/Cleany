@@ -31,7 +31,7 @@ export function BasketBar({
   const total = items.reduce((sum, item) => sum + item.allocated, 0)
 
   return (
-    <section aria-label={t('basket.label')} className="rounded-panel border border-edge bg-card px-4 py-3">
+    <section aria-label={t('basket.label')} className="rounded-panel border border-card-edge bg-card px-4 py-3 shadow-card enter-fade">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
         <p className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2 text-body text-ink-2">
           <span className="font-medium text-ink">{t('basket.title')}</span>
@@ -61,7 +61,7 @@ export function BasketBar({
           </Button>
         </div>
       </div>
-      <ul id={listId} hidden={!open} className="mt-3 flex flex-col border-t border-edge pt-2">
+      <ul id={listId} hidden={!open} className="mt-3 flex flex-col border-t border-hairline pt-2">
         {items.map((item) => (
           <li key={item.id} className="flex h-8 items-center gap-3 text-body">
             <LeaderRow name={item.name} title={item.name} value={formatBytes(item.allocated, locale)} />

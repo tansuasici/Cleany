@@ -238,7 +238,7 @@ export const getSunburst = (scan: ScanId, node: number, depth = 3, minAngle = 0.
 export const getAncestors = (scan: ScanId, node: number) =>
   invoke<NodeEntry[]>('get_ancestors', { scan, node })
 
-/** Rejection value of `revealNode`, `openNode`, `getPath`, `trashNodes` and `deleteNodes`. */
+/** Rejection value of `revealNode`, `openNode`, `openTerminal`, `getPath`, `trashNodes` and `deleteNodes`. */
 export type ActionError =
   | { kind: 'staleScan' }
   | { kind: 'notReady' }
@@ -251,6 +251,9 @@ export const revealNode = (scan: ScanId, node: number) => invoke<void>('reveal_n
 
 /** Opens the node with its default app, as a double-click would. */
 export const openNode = (scan: ScanId, node: number) => invoke<void>('open_node', { scan, node })
+
+/** Opens a terminal in the node if it is a folder, else in the folder holding it. */
+export const openTerminal = (scan: ScanId, node: number) => invoke<void>('open_terminal', { scan, node })
 
 /** The node's full path, for the clipboard. */
 export const getPath = (scan: ScanId, node: number) => invoke<string>('get_path', { scan, node })
@@ -308,3 +311,32 @@ export const getDiskAccess = () => invoke<DiskAccess>('disk_access')
 
 /** Opens System Settings at Privacy & Security → Full Disk Access. */
 export const openDiskAccessSettings = () => invoke<void>('open_disk_access_settings')
+
+/** What an export writes: one item and everything below it, a folder's rows in a sort, or a largest list. */
+export type ExportScope =
+  | { kind: 'subtree'; node: number }
+  | { kind: 'children'; node: number; sort: SortKey; order: SortOrder }
+  | { kind: 'largest'; node: number; largest: LargestKind; limit: number }
+
+export type ExportFormat = 'csv' | 'json'
+
+/** A finished export: rows written, file size, and the name chosen in the save dialog. */
+export interface ExportReport {
+  rows: number
+  bytes: number
+  fileName: string
+}
+
+export type ExportError =
+  | { kind: 'staleScan' }
+  | { kind: 'notReady' }
+  | { kind: 'unknownNode' }
+  | { kind: 'io'; message: string }
+  | { kind: 'dialog'; message: string }
+
+/**
+ * Asks where to save, then writes `scope` there as `format`. `null` when the
+ * save dialog is closed without a choice.
+ */
+export const exportScan = (scan: ScanId, scope: ExportScope, format: ExportFormat) =>
+  invoke<ExportReport | null>('export_scan', { scan, scope, format })

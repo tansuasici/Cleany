@@ -119,7 +119,7 @@ export type BasketAdd =
   | { kind: 'covered'; by: string }
 
 /** How many items the döküm lists. */
-export const TOP_ITEMS = 12
+export const TOP_ITEMS = 1000
 
 interface State {
   locale: Locale

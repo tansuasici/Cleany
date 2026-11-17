@@ -1,5 +1,5 @@
-import { type KeyboardEvent, useCallback, useEffect, useState } from 'react'
-import { type ActionError, type ScanId, getPath, openNode, revealNode } from '../lib/ipc'
+import { type KeyboardEvent, type MouseEvent, useCallback, useEffect, useState } from 'react'
+import { type ActionError, type ScanId, getPath, openNode, openTerminal, revealNode } from '../lib/ipc'
 import { useT } from '../useT'
 
 /** What the action row acts on: the selected item, or the folder on screen. */
@@ -14,7 +14,7 @@ const COPIED_MS = 2000
 type Feedback = { target: number; text: string; kind: 'copied' | 'error' } | null
 
 /**
- * Show in the file manager, open, and copy the path, for `target`. The path is
+ * Show in the file manager, open, open a terminal, and copy the path, for `target`. The path is
  * fetched ahead on every target change so the clipboard write happens inside
  * the click or keypress (WebKit refuses it after an await).
  */
@@ -59,6 +59,11 @@ export function useBrowseActions(scan: ScanId, target: ActionTarget) {
     openNode(scan, id).catch(fail(t('actions.openError')))
   }, [scan, id, fail, t])
 
+  const terminal = useCallback(() => {
+    setFeedback(null)
+    openTerminal(scan, id).catch(fail(t('actions.terminalError')))
+  }, [scan, id, fail, t])
+
   const copy = useCallback(() => {
     const write = (p: string) =>
       navigator.clipboard.writeText(p).then(
@@ -71,7 +76,7 @@ export function useBrowseActions(scan: ScanId, target: ActionTarget) {
 
   // Feedback belongs to the item it was about.
   const shown = feedback?.target === id ? feedback : null
-  return { reveal, open, copy, feedback: shown }
+  return { reveal, open, terminal, copy, feedback: shown }
 }
 
 export type Actions = ReturnType<typeof useBrowseActions>
@@ -80,7 +85,7 @@ export type Actions = ReturnType<typeof useBrowseActions>
 const PRESSABLE = 'button, a[href], select, summary, [role="button"], [role="radio"], [role="checkbox"], [role="switch"], [role="tab"], [role="menuitem"]'
 
 /**
- * R shows, O opens, ⌘C / Ctrl+C copies the path, Space puts the target in the
+ * R shows, O opens, T opens a terminal, ⌘C / Ctrl+C copies the path, Space puts the target in the
  * basket or takes it out. Bound on the Browse section so every view gets
  * them; the views leave these keys alone.
  */
@@ -93,9 +98,10 @@ export function actionKeys(actions: Actions, toggleBasket: () => void) {
     if (el.closest('dialog')) return
     const mod = e.metaKey || e.ctrlKey
     const key = e.key.toLowerCase()
-    if (!mod && (key === 'r' || key === 'o')) {
+    const launch = { r: actions.reveal, o: actions.open, t: actions.terminal }[key]
+    if (!mod && launch) {
       // Holding the key must not open a window per repeat.
-      if (!e.repeat) (key === 'r' ? actions.reveal : actions.open)()
+      if (!e.repeat) launch()
     } else if (!mod && e.key === ' ') {
       if (el.closest(PRESSABLE)) return
       if (!e.repeat) toggleBasket()
@@ -147,4 +153,24 @@ export function deleteKey(mac: boolean, ask: () => void) {
     e.stopPropagation()
     if (!e.repeat) ask()
   }
+}
+
+/** Where the item menu opens, in viewport pixels. */
+export interface MenuAt {
+  x: number
+  y: number
+  /** The view the menu came from; focus goes back to it when the menu closes. */
+  from: HTMLElement | null
+}
+
+/**
+ * Where a view's item menu opens: at the pointer, or under the active item
+ * when the menu key opened it (no pointer position then).
+ */
+export function menuPoint(e: MouseEvent<HTMLElement>): MenuAt {
+  const from = e.currentTarget.closest<HTMLElement>('[role="grid"], [role="listbox"]')
+  if (e.clientX || e.clientY) return { x: e.clientX, y: e.clientY, from }
+  const id = e.currentTarget.getAttribute('aria-activedescendant')
+  const r = (id && document.getElementById(id)?.getBoundingClientRect()) || e.currentTarget.getBoundingClientRect()
+  return { x: r.left + 16, y: r.bottom, from }
 }

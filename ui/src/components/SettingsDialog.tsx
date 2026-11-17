@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState } from 'react'
 import type { Locale } from '../lib/i18n'
 import { useStore } from '../store'
 import { useT } from '../useT'
-import { Button } from './ui'
+import { Button, GearIcon, IconButton } from './ui'
 
 /** Each language names itself, so it is findable whatever the UI language. */
 const LOCALES: { code: Locale; name: string }[] = [
@@ -29,15 +29,15 @@ export function SettingsDialog() {
 
   return (
     <>
-      <button
+      <IconButton
         ref={button}
-        type="button"
+        label={t('settings.open')}
+        icon={<GearIcon />}
+        look="quiet"
+        align="end"
         aria-haspopup="dialog"
         onClick={() => setOpen(true)}
-        className="inline-flex h-8 items-center gap-1 rounded-control px-2 text-secondary font-medium text-ink-2 transition-[background-color,color] duration-150 ease-out hover:bg-raised hover:text-ink motion-reduce:transition-none"
-      >
-        {t('settings.open')}
-      </button>
+      />
       {open && <Settings onClose={() => setOpen(false)} />}
     </>
   )
