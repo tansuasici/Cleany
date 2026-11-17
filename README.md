@@ -1,31 +1,62 @@
-# Cleany
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg">
+    <img src="assets/logo.svg" alt="Cleany" width="220">
+  </picture>
+</p>
 
-**Diskinde yer nereye gitti?** Cleany, macOS, Windows ve Linux için açık kaynak bir disk alanı analiz ve temizlik aracıdır. Hızlı tarar, alanı treemap / sunburst ile gösterir, gereksiz dosyaları güvenle (önce çöpe) temizlemeni sağlar.
+<h3 align="center">See where your disk space went. Clean up what you don't need, safely.</h3>
 
-> 🚧 Erken geliştirme aşamasında. Yol haritası: [docs/PLAN.md](docs/PLAN.md)
+<p align="center">
+  A free, open source disk space tool for macOS, Windows and Linux.
+</p>
 
-## Özellikler (planlanan)
-- Tüm birimler için kapasite / kullanım özeti
-- Paralel, hızlı tarama (macOS `getattrlistbulk`, Windows NTFS MFT hızlı modu)
-- Treemap, sunburst ve sıralanabilir ağaç tablo; tıkla-içine-gir
-- Dosya türü dağılımı, en büyük dosyalar, kopya dosyalar, eski dosyalar
-- Geliştirici önbellekleri ve sistem çöpü için akıllı temizlik kuralları
-- Güvenli silme: varsayılan çöp kutusu, korumalı yollar, silme kaydı
+<p align="center">
+  <a href="https://github.com/tansuasici/Cleany/releases/latest"><b>Download Cleany</b></a>
+</p>
 
-## İndirme
-Sürümler [GitHub Releases](https://github.com/tansuasici/Cleany/releases) üzerinden yayınlanacak:
+<!-- [PLACEHOLDER] Screenshot: the Map view on Browse, light and dark theme. -->
 
-| Platform | Paket |
+## What it does
+
+When your disk fills up, the real question is where the space went. Cleany scans a drive or a folder and shows how much space every folder takes, largest first. You see what is taking up room and you decide what to do with it.
+
+## Highlights
+
+**Three ways to look at your disk.** Explore folders in a table sorted by size, in a map drawn as nested boxes, or in rings. Click a folder to open it and move back and forward through your history.
+
+**The largest files in one list.** The largest files and folders under a folder are collected in a single list, however deep they sit.
+
+**Collect first, then clean.** Add what you want to remove to the selection basket and see how much space it will free before you do anything.
+
+**Clean up safely.** Items go to the Trash first, so you can restore them if you change your mind. Folders that belong to the operating system are protected and cannot be removed. Every removal is written to a log file on your computer. Permanent deletion is optional, turned on in Settings, and asks you to type a confirmation each time.
+
+**Numbers you can trust.** Hard links are counted once. Cloud files that are only placeholders take no space on disk, so they are not added to the total. On macOS, system folders that appear in two places are counted once.
+
+**Changes show up while you look.** On macOS the view updates when a file is added or removed, so you don't need to scan again.
+
+**Export the results.** Save a scan or a single folder as CSV or JSON. While the export runs you see its progress and can stop it at any time.
+
+**Small things that help.** Reveal an item in Finder or your file manager, open it, copy its path, or open a terminal in that folder. When you close the window, Cleany can keep running in the menu bar. The interface is available in English and Turkish.
+
+## Download
+
+Get the latest version from the [Releases](https://github.com/tansuasici/Cleany/releases/latest) page.
+
+| System | File |
 |---|---|
-| macOS (Apple Silicon + Intel) | `.dmg` |
-| Windows 10/11 | `.msi`, `.exe` (kurulum) |
-| Linux | `.AppImage`, `.deb`, `.rpm` |
+| macOS 11 or later (Apple Silicon and Intel) | `.dmg` |
+| Windows 10 and 11 | `.exe` installer or `.msi` |
+| Linux | `.AppImage`, `.deb` or `.rpm` |
 
-## Teknoloji
-[Tauri 2](https://tauri.app) · Rust (tarama çekirdeği) · React + TypeScript + Vite (arayüz)
+**macOS:** The app is signed and notarized by Apple. To scan your whole disk, Cleany asks for Full Disk Access on first launch and takes you to the right setting.
 
-## Katkı
-Katkılar memnuniyetle karşılanır: [CONTRIBUTING.md](CONTRIBUTING.md) · [Davranış kuralları](CODE_OF_CONDUCT.md) · [Güvenlik](SECURITY.md)
+**Windows:** The installer is not signed yet. If Windows shows a warning, click “More info” and then “Run anyway”.
 
-## Lisans
-Cleany, [MIT](LICENSE-MIT) veya [Apache-2.0](LICENSE-APACHE) lisanslarından biri altında, tercihinize göre kullanılabilir.
+## Contributing
+
+Cleany is open source and contributions are welcome. Before you start, read the [contributing guide](CONTRIBUTING.md), the [code of conduct](CODE_OF_CONDUCT.md) and the [security policy](SECURITY.md).
+
+## License
+
+Cleany is available under your choice of the [MIT](LICENSE-MIT) or [Apache 2.0](LICENSE-APACHE) license.
