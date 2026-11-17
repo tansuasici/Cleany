@@ -55,7 +55,7 @@ Get the latest version from the [Releases](https://github.com/tansuasici/Cleany/
 
 ## Contributing
 
-Cleany is open source and contributions are welcome. Before you start, read the [contributing guide](CONTRIBUTING.md), the [code of conduct](CODE_OF_CONDUCT.md) and the [security policy](SECURITY.md). The app is built with [Tauri 2](https://tauri.app). The scanning core is written in Rust and the interface in React and TypeScript.
+Cleany is open source and contributions are welcome. Before you start, read the [contributing guide](CONTRIBUTING.md), the [code of conduct](CODE_OF_CONDUCT.md) and the [security policy](SECURITY.md).
 
 ## License
 
