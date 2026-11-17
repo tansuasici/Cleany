@@ -19,9 +19,12 @@ export function EndedScreen({ screen }: Props) {
       {failed ? (
         <div role="alert" className="mt-6 flex flex-col gap-3">
           <p className="text-ink-2">{t('failed.lead')}</p>
-          <p className="break-words rounded-control border border-hairline bg-card p-3 font-mono text-secondary text-ink">
-          {screen.message}
-          </p>
+          <details>
+            <summary className="flex min-h-6 w-fit cursor-pointer items-center rounded-tag text-secondary text-ink-2 hover:text-ink">
+              {t('failed.detail')}
+            </summary>
+            <p className="mt-2 break-words rounded-control bg-raised p-3 font-mono text-secondary text-ink">{screen.message}</p>
+          </details>
         </div>
       ) : (
         <p className="mt-6 text-ink-2">{t('cancelled.body')}</p>

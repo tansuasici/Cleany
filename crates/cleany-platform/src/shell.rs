@@ -1,13 +1,13 @@
-//! Handing a path to the OS: show it in the file manager, or open it with
-//! its default app.
+//! Handing a path to the OS: show it in the file manager, open it with its
+//! default app, or open a terminal in its folder.
 //!
 //! The command builders are pure so every OS's command line is tested on
-//! every OS; [`reveal`] and [`open`] run them.
+//! every OS; [`reveal`], [`open`] and [`open_terminal`] run them.
 
 use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::io::ErrorKind;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::Os;
@@ -32,6 +32,8 @@ pub struct Launch {
     /// Whether a non-zero exit status means failure. `explorer.exe` exits 1
     /// even when it worked, so its status is not checked.
     pub check_status: bool,
+    /// The working directory to start it in; `None` keeps the app's own.
+    pub cwd: Option<PathBuf>,
 }
 
 impl Launch {
@@ -40,6 +42,7 @@ impl Launch {
             program,
             args,
             check_status: true,
+            cwd: None,
         }
     }
 }
@@ -131,6 +134,66 @@ pub fn open_command(os: Os, path: &Path) -> Option<Launch> {
     }
 }
 
+/// Commands that open a terminal window in the folder `dir`, tried in order
+/// until one starts. Empty on an unsupported OS.
+///
+/// Terminals keep running after the window opens, so only `open -a` (which
+/// returns once Terminal has the request) is waited for; the others count as
+/// working once they start.
+#[must_use]
+pub fn terminal_commands(os: Os, dir: &Path) -> Vec<Launch> {
+    let detached = |program, args| Launch {
+        check_status: false,
+        ..Launch::new(program, args)
+    };
+    match os {
+        Os::Macos => vec![Launch::new(
+            "open",
+            vec![plain("-a"), plain("Terminal"), plain(dir)],
+        )],
+        Os::Windows => vec![
+            detached("wt.exe", vec![plain("-d"), plain(dir)]),
+            // `start` opens a new console window; it inherits the folder from
+            // `cwd`, so the path never passes through cmd's own parsing.
+            Launch {
+                cwd: Some(dir.to_path_buf()),
+                ..detached(
+                    "cmd.exe",
+                    vec![plain("/c"), plain("start"), plain(""), plain("cmd.exe")],
+                )
+            },
+        ],
+        Os::Linux => vec![
+            // Debian's alternative; its flags differ per terminal, so the
+            // folder goes in as the working directory.
+            Launch {
+                cwd: Some(dir.to_path_buf()),
+                ..detached("x-terminal-emulator", Vec::new())
+            },
+            detached(
+                "gnome-terminal",
+                vec![plain(format!("--working-directory={}", dir.display()))],
+            ),
+            detached("konsole", vec![plain("--workdir"), plain(dir)]),
+        ],
+        Os::Other => Vec::new(),
+    }
+}
+
+/// The folder a terminal opens in for `path`: a folder itself, else (a file,
+/// a symlink, anything else) the folder holding it.
+///
+/// # Errors
+/// [`ShellError::Gone`] if nothing is at `path`.
+pub fn terminal_dir(path: &Path) -> Result<PathBuf, ShellError> {
+    match std::fs::symlink_metadata(path) {
+        Err(e) if e.kind() == ErrorKind::NotFound => Err(ShellError::Gone),
+        Ok(meta) if meta.is_dir() => Ok(path.to_path_buf()),
+        // Other errors (permissions) are the terminal's to report.
+        _ => Ok(path.parent().unwrap_or(path).to_path_buf()),
+    }
+}
+
 /// A `file://` URI for `path`, percent-encoding every byte outside the
 /// unreserved set and `/`. Commas must be encoded: `dbus-send` splits
 /// `array:string:` values on them.
@@ -164,6 +227,16 @@ pub fn reveal(path: &Path) -> Result<(), ShellError> {
 pub fn open(path: &Path) -> Result<(), ShellError> {
     ensure_exists(path)?;
     run_first(open_command(Os::current(), path).into_iter().collect())
+}
+
+/// Opens a terminal window in `path` if it is a folder, else in the folder
+/// holding it.
+///
+/// # Errors
+/// As for [`reveal`].
+pub fn open_terminal(path: &Path) -> Result<(), ShellError> {
+    let dir = terminal_dir(path)?;
+    run_first(terminal_commands(Os::current(), &dir))
 }
 
 fn ensure_exists(path: &Path) -> Result<(), ShellError> {
@@ -203,6 +276,9 @@ fn run(launch: &Launch) -> Result<(), ShellError> {
             }
         }
     }
+    if let Some(dir) = &launch.cwd {
+        cmd.current_dir(dir);
+    }
     let fail = |e: std::io::Error| ShellError::Launch(format!("{}: {e}", launch.program));
     if launch.check_status {
         let status = cmd.status().map_err(fail)?;
@@ -212,14 +288,19 @@ fn run(launch: &Launch) -> Result<(), ShellError> {
             Err(ShellError::Launch(format!("{}: {status}", launch.program)))
         }
     } else {
-        // Dropping the child does not kill it; Windows leaves no zombie.
-        cmd.spawn().map(drop).map_err(fail)
+        // Dropping the child does not kill it. Waiting on a thread reaps it
+        // when it exits, so no zombie is left on Unix.
+        let mut child = cmd.spawn().map_err(fail)?;
+        std::thread::spawn(move || {
+            let _ = child.wait();
+        });
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Arg, Launch, open_command, reveal_commands};
+    use super::{Arg, Launch, open_command, reveal_commands, terminal_commands, terminal_dir};
     use crate::Os;
     use std::ffi::OsString;
     use std::path::Path;
@@ -237,6 +318,7 @@ mod tests {
                 program: "open",
                 args: vec![p("-R"), p("/Users/a/b c.txt")],
                 check_status: true,
+                cwd: None,
             }]
         );
     }
@@ -252,6 +334,7 @@ mod tests {
                     r#"/select,"C:\Users\a, b\c d.txt""#
                 ))],
                 check_status: false,
+                cwd: None,
             }]
         );
     }
@@ -308,9 +391,67 @@ mod tests {
     }
 
     #[test]
+    fn terminal_commands_macos_opens_terminal_app() {
+        let got = terminal_commands(Os::Macos, Path::new("/Users/a/b c"));
+        assert_eq!(
+            got,
+            vec![Launch {
+                program: "open",
+                args: vec![p("-a"), p("Terminal"), p("/Users/a/b c")],
+                check_status: true,
+                cwd: None,
+            }]
+        );
+    }
+
+    #[test]
+    fn terminal_commands_windows_tries_wt_then_cmd() {
+        let dir = Path::new(r"C:\Users\a, b & c");
+        let got = terminal_commands(Os::Windows, dir);
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0].program, "wt.exe");
+        assert_eq!(got[0].args, vec![p("-d"), p(r"C:\Users\a, b & c")]);
+        assert!(!got[0].check_status);
+        // The folder reaches cmd only as the working directory.
+        assert_eq!(got[1].program, "cmd.exe");
+        assert_eq!(got[1].args, vec![p("/c"), p("start"), p(""), p("cmd.exe")]);
+        assert_eq!(got[1].cwd.as_deref(), Some(dir));
+    }
+
+    #[test]
+    fn terminal_commands_linux_falls_back_in_order() {
+        let dir = Path::new("/home/a/b c");
+        let got = terminal_commands(Os::Linux, dir);
+        let programs: Vec<_> = got.iter().map(|l| l.program).collect();
+        assert_eq!(
+            programs,
+            ["x-terminal-emulator", "gnome-terminal", "konsole"]
+        );
+        assert!(got.iter().all(|l| !l.check_status));
+        assert_eq!(got[0].cwd.as_deref(), Some(dir));
+        assert_eq!(got[1].args, vec![p("--working-directory=/home/a/b c")]);
+        assert_eq!(got[2].args, vec![p("--workdir"), p("/home/a/b c")]);
+        assert!(terminal_commands(Os::Other, dir).is_empty());
+    }
+
+    #[test]
+    fn terminal_dir_of_dir_is_itself_and_of_file_is_parent() {
+        let root = std::env::temp_dir().join(format!("cleany-terminal-dir-{}", std::process::id()));
+        let file = root.join("f.txt");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(&file, b"x").unwrap();
+        assert_eq!(terminal_dir(&root), Ok(root.clone()));
+        assert_eq!(terminal_dir(&file), Ok(root.clone()));
+        std::fs::remove_file(&file).unwrap();
+        std::fs::remove_dir(&root).unwrap();
+        assert_eq!(terminal_dir(&file), Err(super::ShellError::Gone));
+    }
+
+    #[test]
     fn missing_path_is_gone() {
         let missing = std::env::temp_dir().join("cleany-shell-test-does-not-exist");
         assert_eq!(super::reveal(&missing), Err(super::ShellError::Gone));
         assert_eq!(super::open(&missing), Err(super::ShellError::Gone));
+        assert_eq!(super::open_terminal(&missing), Err(super::ShellError::Gone));
     }
 }

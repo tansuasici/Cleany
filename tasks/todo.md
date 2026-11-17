@@ -9,6 +9,91 @@ Give the task you are actively working on an `h3` heading under **In Progress** 
 
 ## In Progress
 
+### Arayüz: "Terminalde aç" ve layout düzenlemesi — onaylandı, uygulandı, commit bekliyor (2026-11-17)
+
+**Durum (2026-11-17)**
+- A: worktree'de yazıldı, ana dizine elle taşındı (eylem satırında `TerminalIcon` ikon düğmesi, sağ tık menüsünde öğe, kısayol `T`). fmt, clippy `-D warnings`, test geçti. Gerçek uygulamada Terminal'in açıldığı henüz görülmedi.
+- B: dişli düğme, tek satır başlık (375'te seçici alta iner), `max-w-360`, görünüm sırası Tablo · Harita · En büyükler · Halka, ikon eylemler ve üstte açılan ipucu, birim başına kart, Harita/Halka `m-2 rounded-control`. Mock'ta 375 / 768 / 1280, açık ve koyu bakıldı. Mock'ta Harita ve Halka verisi yok.
+- İki PR ayrımı: A dosyaları (`shell.rs`, `actions.rs`, `lib.rs`, `ipc.ts`) yalnız A'ya ait. `i18n.ts`, `useBrowseActions.ts`, `BrowseActions.tsx` ikisini de taşıyor, A için worktree sürümleri kullanılabilir.
+
+**Hedef**: Seçili öğenin klasöründe terminal açılabilsin. Tarama sonrası ekranlar pencere genişliğini kullansın, eylemler ikon ve metin ayrımıyla sadeleşsin, kısayollar her görünümde aynı olsun ve boyut rakamlarındaki virgül boşluğu kalksın.
+
+**Bağlam**: Kullanıcı arayüzü fazla metin düğmeli ve dağınık buldu, "Terminalde aç" istedi (IPC değişikliği için onay verildi). İki PR olarak ilerlenir: **A** terminal, **B** layout. A küçük ve bağımsızdır, önce gider. B, design kit sırasıyla yapılır: slop-audit ve interface-check ile başlar, onaylı plana göre kurulur, sonra yeniden denetlenir.
+
+**Gözlem (gerçek uygulama, döküm ekranı, 1512 pt pencere)**:
+- İçerik ortada 960 px'e sıkışıyor. Sağda ve altta pencerenin yaklaşık üçte biri boş (`Browse.tsx:347` `max-w-240`, `Summary.tsx:45`, `Volumes.tsx:25`, `Scanning.tsx:35` her biri ayrı genişlik).
+- Boyut rakamlarında virgül geniş: "56 , 3 GB". Neden: `ui-monospace` virgüle tam bir hücre veriyor (`components/ui.tsx:84`).
+- "İlk 100 tanesini göster" düz metin gibi görünüyor. "Yeniden tara" birincil düğmeden kopuk duruyor. "Toplam" rakamı boyut sütunuyla hizalı değil.
+- Eylem satırında altı metin düğmesi ve her birinde kısayol rozeti var (`BrowseActions.tsx:63-112`).
+- Üst klasöre çıkış tabloda ← ve Backspace, Harita'da yalnız Backspace (`Treemap.tsx:289`), Halka'da yalnız Backspace (`Sunburst.tsx:360`). İpucu satırları uzun cümleler.
+
+---
+
+#### A. Terminalde aç
+
+**Davranış**
+- Hedef klasörse o klasörde, dosya ya da sembolik bağlantıysa bulunduğu klasörde terminal açılır. Tarama kökü de hedef olabilir (çöpten farklı olarak zararsız).
+- Düğme eylem satırında, kısayol `T`. Odak görünümdeyken çalışır, tuşu basılı tutmak yeni pencere açmaz (R ve O gibi).
+- Hata ve "öğe artık yok" durumları mevcut eylem geri bildirimini kullanır.
+
+**Komutlar** (`cleany-platform/src/shell.rs`, saf kurucu `terminal_commands(os, dir) -> Vec<Launch>`, sırayla denenir)
+- macOS: `open -a Terminal <klasör>`.
+- Windows: `wt.exe -d <klasör>`, yoksa `cmd.exe /c start "" /d "<klasör>" cmd.exe`.
+- Linux: `x-terminal-emulator` (klasör çalışma dizini olarak), yoksa `gnome-terminal --working-directory=<klasör>`, yoksa `konsole --workdir <klasör>`.
+- Çalışma dizini gereken komutlar için `Launch`'a özel bir `cwd: Option<PathBuf>` alanı eklenir. Genel API'de yalnız `terminal_commands` ve `open_terminal` yenidir.
+
+**IPC** (onaylandı): `open_terminal(scan, node) -> ()`, hata türü mevcut `ActionError`. Yol yine Rust'ta ağaçtan çıkar, UI yol göndermez.
+
+**Testler (önce yazılır)**
+- `shell::tests::terminal_commands_per_os`: üç OS'ta program, argüman ve çalışma dizini beklenen biçimde.
+- `shell::tests::terminal_commands_windows_quotes_dir`: boşluklu ve virgüllü klasör bozulmaz.
+- `actions::tests::terminal_dir_of_file_is_parent` ve `terminal_dir_of_dir_is_itself`.
+- `actions::tests::ipc_ts_mentions_every_action_tag`: `'open_terminal'` eklenir.
+
+**Dosyalar**: `crates/cleany-platform/src/shell.rs`, `src-tauri/src/actions.rs`, `src-tauri/src/lib.rs` (kayıt), `ui/src/lib/ipc.ts`, `ui/src/screens/useBrowseActions.ts`, `ui/src/screens/BrowseActions.tsx`, `ui/src/lib/i18n.ts` (TR/EN: "Terminalde aç", "Terminal açılamadı.").
+
+**Doğrulama**: fmt, clippy `-D warnings`, test, release build. Gerçek uygulamada bir klasör ve bir dosya için Terminal'in doğru klasörde açıldığını görmek. Windows ve Linux elle denenemez, yalnız birim testi ve CI.
+
+---
+
+#### B. Layout düzenlemesi
+
+1. **Genişlik ve ızgara.** Tek bir içerik genişliği düzeni: gezinme ekranları (Browse) pencereyi `max-w-360` (1440 px) sınırına kadar kullanır, okuma ekranları (Birimler, Tarama, Döküm) fiş genişliğinde kalır ama dikeyde ortalanmaz, üstten başlar. Döküm ekranında yan sütun (Sayılmayanlar ve eylemler) fişin yanında sabit genişlikte durur.
+2. **Üst çubuk.** "Ayarlar" metni dişli ikonlu düğmeye döner (ipucu ve `aria-label` ile). Konum izi aynı kalır.
+3. **Browse başlık satırı.** Geri/İleri, klasör adı ve görünüm seçici tek satırda: seçici sağa alınır. 375 px'te seçici başlığın altına iner.
+4. **Eylem satırı.** İki grup:
+   - Solda yalnız ikon, ikincil eylemler: Finder'da göster, Aç, Yolu kopyala, Terminalde aç.
+   - Sağda ikon ve metin, sonucu olan eylemler: Sepete ekle, Çöpe taşı, (ayar açıksa) Kalıcı olarak sil.
+   - Kısayol rozetleri düğmeden kalkar, ipucuna (tooltip) taşınır: "Finder'da göster · R". İpucu fareyle üstüne gelince ve klavye odağında gösterilir (`title` klavyede görünmediği için yetmez).
+   - Seçili öğenin adı eylem satırının başında bir kez yazar, `aria-describedby` aynı kalır.
+5. **Kısayollar ve ipucu.** Üst klasöre çıkış her görünümde ← ve Backspace (ok tuşlarını seçim için kullanan Harita ve Halka'da yalnız Backspace kalır, ipucu bunu söyler). Uzun ipucu cümleleri yerine kısa bir tuş satırı: "↑↓ seç · Enter aç · ⌫ yukarı · Esc döküm".
+6. **Rakamlar.** Virgül boşluğu kaldırılır (açık soru 1).
+7. **Döküm ekranı.** "İlk 100 tanesini göster" bağlantı düğmesi görünümü alır. "Tümünü incele" ve "Yeniden tara" yan yana, aynı satır yüksekliğinde. "Toplam" rakamı boyut sütununun sağ kenarına hizalanır.
+8. **Birimler ekranı.** Kart pencere genişliğine yayılır, son tarama zamanı ve "Dökümü aç" kartın içinde durur. Taramadan önce çubuk tek dolu blok yerine kullanılan/boş ayrımını gösterir.
+9. **Metin tutarlılığı.** Fişte "Diğer N öğe" yerine "Diğer N kalem" (başlık "En büyük kalemler" ile aynı dil).
+
+**Yeni ortak bileşenler (onay)**: `components/ui.tsx` içine `IconButton`, `Tooltip` ve 7 çizgi ikon (göster, aç, kopyala, terminal, sepet, çöp, dişli). Mevcut `ChevronIcon` ile aynı çizgi kalınlığı ve 16 px. Yeni bağımlılık yok.
+
+**Doğrulama (design kit)**: başlamadan ve bitince `/slop-audit` ve `/interface-check`. Tarayıcı mock'u (`public/__mock.html`) ile 375 / 768 / 1280, açık ve koyu ekran görüntüleri. Yalnız klavyeyle tüm eylemlere ulaşma. Uzun ad, boş klasör, 1 ve 1000 öğe (`/stress-ui`). Gerçek uygulamada son bakış. Kullanıcının gerçek dosyalarına hiçbir eylem uygulanmaz.
+
+---
+
+#### Açık sorular
+1. **Rakam yazı tipi.** DESIGN_MAP boyut rakamlarını `ui-monospace` ile tanımlıyor ve virgül boşluğu buradan geliyor. Önerim: boyut rakamları da sistem fontuyla `tabular-nums` olsun (SF ve Segoe tablo rakamlarını hizalıyor, virgül dar kalıyor). Alternatif: mono kalsın, ondalık ayırıcı ayrı bir span'de daraltılsın. İlki DESIGN_MAP'in Type satırını değiştirir.
+2. **Görünüm sayısı.** Dört görünüm (Tablo, Harita, Halka, En büyükler) kalsın mı? Önerim: kalsın, ama varsayılan sıra Tablo, Harita, En büyükler, Halka olsun. Kaldırmak bu işin kapsamı dışında.
+3. **Yeni ortak bileşenler** (`IconButton`, `Tooltip`, ikonlar) uygun mu?
+4. **Terminal uygulaması.** Şimdilik macOS'ta hep Terminal.app. iTerm veya Ghostty seçimi ileride Ayarlar'a eklenebilir. Uygun mu?
+5. **Kısayol** `T` uygun mu?
+
+#### Riskler
+- Yalnız ikonlu düğmeler ilk kullanımda tanınmayabilir. Önlem: ipucu, `aria-label`, ve sonucu olan eylemlerde metnin kalması.
+- Linux'ta terminal çeşitliliği: listedeki üç terminal de yoksa hata gösterilir.
+- Genişliğin artması Harita ve Halka'nın yeniden yerleşimini tetikler. Önlem: mevcut boyut gözlemcisi zaten var, 1440 px'te performans denenir.
+
+#### Not Now
+- Dosya türü dökümü, arama, "ne büyüdü?" karşılaştırması, temizlik önerileri (M5–M7).
+- Sepete sürükle bırak.
+
 ### macOS: `/` taramasında Data birimi iki kez sayılıyor (firmlink) — uygulandı, smoke test geçti
 
 **Durum (2026-11-17)**: Dal `fix/macos-firmlink-double-count` (main 3add5b1'den). `feat/largest-items` smoke testinde görüldü (995 GB disk, toplam ~1,6 TB).
@@ -117,6 +202,53 @@ UI için birim test altyapısı yok. Davranış uygulamada smoke test ile doğru
 - “Daha fazla göster” ve 100'den uzun liste.
 - Tür dağılımı, eski dosyalar, boş klasörler (M5'in diğer kalemleri).
 - Tarayıcı firmlink'leri iki kez sayıyor (`Users/...` ve `System/Volumes/Data/...`), 995 GB diskte toplam 1,6 TB görünüyor. #36 dışı, ayrı iş.
+
+### Dışa aktar: CSV ve JSON (ajanlarla inceleme için) — plan, onay bekliyor (2026-11-17)
+
+**Hedef**: Kullanıcı tarama verisini bir kaydet penceresiyle CSV ya da JSON olarak dışa aktarabilsin ve bu dosyayı kendi ajanlarına verip inceletebilsin. Üç kapsam olacak: sağ tıkla seçilen öğe, ekranda o an görünen liste ve tüm tarama.
+
+**Bağlam**: Kullanıcı isteği: "sağ tık menüsünden de aktarabilmeliyim veya o an ekranda ne varsa onu da aktarabilmeliyim veya tüm tarama ağacı da". Kaydet penceresi, CSV ve JSON seçildi. Çıktıyı okuyacak olan bir LLM ajanı, bu yüzden her satırda tam yol bulunur, birimler açıktır (bayt ve Unix saniyesi) ve JSON'da bir `meta` bloğu yer alır.
+
+**Kapsamlar**
+- **Sağ tık / eylem: "Dışa aktar…"**: hedef öğenin tüm alt ağacı. Hedef dosyaysa tek satır olur, sepetteki çoklu seçim desteklenmez (ilk sürüm).
+- **Ekrandaki görünüm** (Browse başlığında görünüm seçicinin yanında "Dışa aktar" düğmesi, menüde iki seçenek):
+  - "Bu görünümü dışa aktar…": Tablo, Harita ve Halka'da açık klasörün doğrudan çocukları, tablonun o anki sıralamasıyla. En büyükler'de o anki tür (dosya ya da klasör) ve aynı sınırla en büyükler listesi.
+  - "Tüm taramayı dışa aktar…": tarama kökünün alt ağacı.
+
+**Biçim** (kaydet penceresindeki uzantı belirler: `.csv` ya da `.json`)
+- Sütunlar / alanlar: `path` (tam yol), `name`, `kind` (file, dir, symlink, other), `allocated_bytes`, `logical_bytes`, `files`, `modified_unix`, `modified_iso`, `depth` (dışa aktarılan köke göre), `hardlink`, `placeholder`.
+- CSV: RFC 4180 tırnaklama, UTF-8, ilk satır başlık. Yazar elle yazılır, yeni crate yok.
+- JSON: `{ "meta": { "tool": "Cleany", "version", "exported_at", "scan_root", "scope", "scope_path", "rows", "units": { "size": "bytes", "time": "unix seconds" } }, "items": [ … ] }`. serde_json zaten bağımlılık.
+- Alt ağaç yazımı derinlik öncelikli ve akışlıdır (dosyaya `BufWriter` ile satır satır), belleğe tüm listeyi almaz. Sıralama: her klasörde boyuta göre azalan.
+- Varsayılan dosya adı: `cleany-<kök adı>-<YYYYMMDD-HHMM>.csv`.
+
+**Kaydet penceresi (onay gerekir)**
+- `tauri-plugin-dialog` eklenir (yalnız Rust tarafı, `Cargo.toml` + `Cargo.lock`). Pencere Rust komutunun içinden açılır (`app.dialog().file().blocking_save_file()`, async komutta, ana iş parçacığında değil).
+- Böylece UI yine yol göndermez ve almaz, **capability listesi boş kalır**, npm paketi eklenmez. İptal edilirse komut `None` döner, hata sayılmaz.
+
+**IPC (onay gerekir)**
+- `export_scan(scan, scope: ExportScope) -> Option<ExportReport>`
+  - `ExportScope = { kind: 'subtree', node } | { kind: 'children', node, sort, order } | { kind: 'largest', node, largest: LargestKind, limit }`
+  - `ExportReport = { rows: number, bytes: number, fileName: string }`
+- Hata türü yeni `ExportError` (io, oturum yok, dialog), mevcut `ActionError` deseniyle UI tarafında türlere eşlenir.
+- Bitince mevcut eylem geri bildirimiyle bilgi: “12.480 satır dışa aktarıldı.” ve "Finder'da göster" (mevcut reveal yerine dosyanın yolu UI'ya gelmediği için Rust tarafında `shell::reveal` çağıran bir bayrak ya da ikinci komut gerekir. İlk sürümde yalnız bilgi verilir).
+
+**Testler (önce yazılır, `src-tauri/src/export.rs`)**
+- `csv_quotes_commas_quotes_and_newlines`: alan kaçışları.
+- `subtree_rows_are_depth_first_and_sized_desc`: küçük bir test ağacında satır sırası ve `depth`.
+- `children_scope_matches_get_children_order`: sıralama tabloyla aynı.
+- `largest_scope_matches_get_largest`.
+- `json_has_meta_and_valid_items`: çıktı `serde_json` ile geri okunur.
+- `format_from_extension`: `.csv`, `.json`, büyük harf, uzantısız (varsayılan CSV).
+- `ipc_ts_mentions_every_action_tag` güncellenir.
+
+**Dosyalar**: `src-tauri/Cargo.toml`, `Cargo.lock`, `src-tauri/src/export.rs` (yeni), `src-tauri/src/lib.rs` (komut ve eklenti kaydı), `src-tauri/src/session.rs` (ağaçta gezinme için gerekirse bir okuma yardımcı fonksiyonu), `ui/src/lib/ipc.ts`, `ui/src/screens/Browse.tsx` (başlıktaki düğme), `ui/src/screens/useBrowseActions.ts` ve `BrowseActions.tsx` (sağ tık öğesi), `ui/src/lib/i18n.ts` (TR/EN).
+
+**Açık sorular**
+1. Tüm tarama milyonlarca satır olabilir (yüzlerce MB). Ajana verilecekse bir alt sınır seçeneği (ör. 1 MB altını atla) ya da yalnız klasörler seçeneği istenir mi? İlk sürümde filtresiz önerilir.
+2. Sağ tıktaki "Dışa aktar…" için kısayol: `E` önerilir.
+
+**Doğrulama**: fmt, clippy `-D warnings`, test, release build. Gerçek uygulamada üç kapsamı da CSV ve JSON olarak dışa aktarıp dosyayı açmak, iptal yolunu denemek.
 
 ## Up Next
 

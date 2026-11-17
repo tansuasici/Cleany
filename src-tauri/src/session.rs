@@ -53,7 +53,7 @@ pub const MAX_ISSUES: usize = 100;
 pub struct ScanId(u64);
 
 /// Column to sort children by.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum SortKey {
     /// Bytes on disk.
@@ -69,7 +69,7 @@ pub enum SortKey {
 }
 
 /// Sort direction.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum SortOrder {
     /// Smallest first.
@@ -130,7 +130,7 @@ pub struct NodeEntry {
 }
 
 /// What [`Sessions::largest`] ranks.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum LargestKind {
     /// Regular files, by their own allocated bytes.
@@ -151,6 +151,88 @@ pub struct LargestEntry {
     /// The folder holding it, relative to the scope and `/`-joined; empty
     /// for the scope itself and its direct children.
     pub dir: String,
+}
+
+/// Which rows [`Sessions::export`] writes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum ExportScope {
+    /// The node and everything below it, depth first, larger first.
+    Subtree {
+        /// Where the export starts.
+        node: u32,
+    },
+    /// The node's direct children in the given order, as the table lists them.
+    Children {
+        /// The folder whose children are written.
+        node: u32,
+        /// Column to sort by.
+        sort: SortKey,
+        /// Sort direction.
+        order: SortOrder,
+    },
+    /// The `limit` largest files or folders below the node, as
+    /// [`Sessions::largest`] ranks them.
+    Largest {
+        /// The scope of the ranking.
+        node: u32,
+        /// Files or folders.
+        largest: LargestKind,
+        /// How many rows, at most [`MAX_PAGE`].
+        limit: u32,
+    },
+}
+
+impl ExportScope {
+    /// The node the scope starts at.
+    #[must_use]
+    pub const fn node(self) -> u32 {
+        match self {
+            Self::Subtree { node } | Self::Children { node, .. } | Self::Largest { node, .. } => {
+                node
+            }
+        }
+    }
+}
+
+/// What an export starts with, before its rows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExportHead {
+    /// The scanned folder.
+    pub scan_root: PathBuf,
+    /// The node the scope starts at.
+    pub scope_path: PathBuf,
+}
+
+/// One exported row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExportRow {
+    /// The item's full path.
+    pub path: PathBuf,
+    /// Levels below the scope node: 0 for the node itself.
+    pub depth: u32,
+    /// The item as the UI sees it.
+    pub entry: NodeEntry,
+}
+
+/// Where [`Sessions::export`] writes: a file format, or a list in tests.
+pub trait ExportSink {
+    /// The sink's own failure, which also carries a [`SessionError`].
+    type Error: From<SessionError>;
+    /// Called once, before any row.
+    ///
+    /// # Errors
+    /// Whatever the sink fails with.
+    fn head(&mut self, head: &ExportHead) -> Result<(), Self::Error>;
+    /// Called once per row, in order.
+    ///
+    /// # Errors
+    /// Whatever the sink fails with.
+    fn row(&mut self, row: &ExportRow) -> Result<(), Self::Error>;
 }
 
 /// One page of a node's sorted children.
@@ -1051,6 +1133,79 @@ impl Sessions {
             .collect())
     }
 
+    /// Writes the rows `scope` names to `sink` and returns how many were
+    /// written. The lock is held while writing, so the tree cannot change
+    /// under the export.
+    ///
+    /// # Errors
+    /// [`SessionError::StaleScan`], [`SessionError::NotReady`] or
+    /// [`SessionError::UnknownNode`], or the sink's own error.
+    pub fn export<S: ExportSink>(
+        &self,
+        id: ScanId,
+        scope: ExportScope,
+        sink: &mut S,
+    ) -> Result<u64, S::Error> {
+        let mut state = lock(&self.state);
+        let tree = &state.finished_mut(id)?.tree;
+        let start = tree
+            .node_id(scope.node())
+            .ok_or(SessionError::UnknownNode)?;
+        let scope_path = tree.path(start).ok_or(SessionError::UnknownNode)?;
+        let scan_root = tree.path(tree.root()).ok_or(SessionError::NotReady)?;
+        sink.head(&ExportHead {
+            scan_root,
+            scope_path: scope_path.clone(),
+        })?;
+        let mut rows = 0_u64;
+        let mut emit = |sink: &mut S, id: NodeId, path: PathBuf, depth: u32| {
+            let Some(entry) = entry(tree, id) else {
+                return Ok(());
+            };
+            rows += 1;
+            sink.row(&ExportRow { path, depth, entry })
+        };
+        match scope {
+            ExportScope::Subtree { .. } => {
+                let mut stack = vec![(start, scope_path, 0_u32)];
+                while let Some((id, path, depth)) = stack.pop() {
+                    let children = sort(tree, id, SortKey::Allocated, SortOrder::Desc);
+                    for &child in children.iter().rev() {
+                        if let Some(name) = tree.name(child) {
+                            stack.push((child, path.join(name), depth + 1));
+                        }
+                    }
+                    emit(sink, id, path, depth)?;
+                }
+            }
+            ExportScope::Children {
+                sort: key, order, ..
+            } => {
+                for child in sort(tree, start, key, order) {
+                    if let Some(name) = tree.name(child) {
+                        emit(sink, child, scope_path.join(name), 1)?;
+                    }
+                }
+            }
+            ExportScope::Largest { largest, limit, .. } => {
+                let limit = limit.min(MAX_PAGE) as usize;
+                let ranked: Vec<NodeId> = match largest {
+                    LargestKind::Files => largest_files(tree, start, limit),
+                    LargestKind::Dirs => largest_dirs(tree, start, limit)
+                        .into_iter()
+                        .map(|(n, _)| n)
+                        .collect(),
+                };
+                for n in ranked {
+                    if let Some(path) = tree.path(n) {
+                        emit(sink, n, path, depth_below(tree, start, n))?;
+                    }
+                }
+            }
+        }
+        Ok(rows)
+    }
+
     /// Moves `nodes` to the trash with `mover` and takes them out of the
     /// tree. Duplicates and nodes below another requested node are dropped.
     /// The root and anything holding a cloud placeholder come back
@@ -1301,6 +1456,22 @@ fn relative_dir(tree: &Tree, scope: NodeId, node: NodeId) -> String {
     names.join("/")
 }
 
+/// Levels between `scope` and `node`: 0 when they are the same node.
+fn depth_below(tree: &Tree, scope: NodeId, node: NodeId) -> u32 {
+    let mut depth = 0;
+    let mut cur = node;
+    while cur != scope {
+        match tree.node(cur).and_then(Node::parent) {
+            Some(p) => {
+                depth += 1;
+                cur = p;
+            }
+            None => break,
+        }
+    }
+    depth
+}
+
 fn entry(tree: &Tree, id: NodeId) -> Option<NodeEntry> {
     let n = tree.node(id)?;
     Some(NodeEntry {
@@ -1373,10 +1544,11 @@ fn millis(d: std::time::Duration) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        CancelToken, ChildrenPage, Deletion, EntryKind, Finished, Freed, LargestKind,
-        MAX_SUNBURST_DEPTH, MAX_TREEMAP_DEPTH, NodeEntry, RingArc, ScanEvent, ScanId, ScanIssue,
-        ScanStats, ScanSummary, SessionError, Sessions, SortKey, SortOrder, State, SunburstSlice,
-        TrashItem, TrashOutcome, TrashReport, TreemapCell, TreemapSlice, entry, lock, new_sink,
+        CancelToken, ChildrenPage, Deletion, EntryKind, ExportHead, ExportRow, ExportScope,
+        ExportSink, Finished, Freed, LargestKind, MAX_SUNBURST_DEPTH, MAX_TREEMAP_DEPTH, NodeEntry,
+        RingArc, ScanEvent, ScanId, ScanIssue, ScanStats, ScanSummary, SessionError, Sessions,
+        SortKey, SortOrder, State, SunburstSlice, TrashItem, TrashOutcome, TrashReport,
+        TreemapCell, TreemapSlice, entry, lock, new_sink,
     };
     use cleany_core::{EntryInfo, NodeFlags, NodeKind, ScanOptions, Size, Tree, TreeBuilder};
     use std::ffi::OsStr;
@@ -2382,5 +2554,111 @@ mod tests {
         words.push("'desc'".to_owned());
         let missing: Vec<_> = words.iter().filter(|w| !ts.contains(w.as_str())).collect();
         assert!(missing.is_empty(), "ui/src/lib/ipc.ts lacks {missing:?}");
+    }
+
+    /// Collects an export in memory.
+    #[derive(Default)]
+    struct Rows {
+        head: Option<ExportHead>,
+        rows: Vec<ExportRow>,
+    }
+
+    impl ExportSink for Rows {
+        type Error = SessionError;
+        fn head(&mut self, head: &ExportHead) -> Result<(), SessionError> {
+            self.head = Some(head.clone());
+            Ok(())
+        }
+        fn row(&mut self, row: &ExportRow) -> Result<(), SessionError> {
+            self.rows.push(row.clone());
+            Ok(())
+        }
+    }
+
+    fn export(s: &Sessions, id: ScanId, scope: ExportScope) -> Rows {
+        let mut rows = Rows::default();
+        let n = s.export(id, scope, &mut rows).unwrap();
+        assert_eq!(n, rows.rows.len() as u64);
+        rows
+    }
+
+    #[test]
+    fn subtree_rows_are_depth_first_and_sized_desc() {
+        let (s, id) = done(small_tree());
+        let out = export(&s, id, ExportScope::Subtree { node: 0 });
+        let head = out.head.unwrap();
+        assert_eq!(head.scan_root, PathBuf::from("/r"));
+        assert_eq!(head.scope_path, PathBuf::from("/r"));
+        // Compared as paths: Windows joins with `\`, and `Path` equality
+        // treats both separators alike.
+        let got: Vec<(PathBuf, u32)> = out.rows.iter().map(|r| (r.path.clone(), r.depth)).collect();
+        let want = [
+            ("/r", 0),
+            ("/r/b", 1),
+            ("/r/C", 1),
+            ("/r/C/x", 2),
+            ("/r/a", 1),
+        ];
+        let want: Vec<(PathBuf, u32)> = want.iter().map(|&(p, d)| (PathBuf::from(p), d)).collect();
+        assert_eq!(got, want);
+    }
+
+    #[test]
+    fn children_scope_matches_get_children_order() {
+        let (s, id) = done(small_tree());
+        let page = s
+            .children(id, 0, SortKey::Name, SortOrder::Asc, 0, 100)
+            .unwrap();
+        let out = export(
+            &s,
+            id,
+            ExportScope::Children {
+                node: 0,
+                sort: SortKey::Name,
+                order: SortOrder::Asc,
+            },
+        );
+        let got: Vec<&str> = out.rows.iter().map(|r| r.entry.name.as_str()).collect();
+        assert_eq!(got, names(&page));
+        assert!(out.rows.iter().all(|r| r.depth == 1));
+        assert_eq!(out.rows[0].path, PathBuf::from("/r/a"));
+    }
+
+    #[test]
+    fn largest_scope_matches_get_largest() {
+        let (s, id) = done(small_tree());
+        let want = s.largest(id, 0, LargestKind::Files, 2).unwrap();
+        let out = export(
+            &s,
+            id,
+            ExportScope::Largest {
+                node: 0,
+                largest: LargestKind::Files,
+                limit: 2,
+            },
+        );
+        let got: Vec<&NodeEntry> = out.rows.iter().map(|r| &r.entry).collect();
+        let want: Vec<&NodeEntry> = want.iter().map(|l| &l.entry).collect();
+        assert_eq!(got, want);
+        assert_eq!(out.rows[0].path, PathBuf::from("/r/b"));
+        assert_eq!(out.rows[1].path, PathBuf::from("/r/C/x"));
+        assert_eq!(out.rows[1].depth, 2);
+    }
+
+    #[test]
+    fn export_rejects_unknown_node_and_stale_scan() {
+        let (s, id) = done(small_tree());
+        let mut rows = Rows::default();
+        let scope = ExportScope::Subtree { node: u32::MAX };
+        assert_eq!(
+            s.export(id, scope, &mut rows),
+            Err(SessionError::UnknownNode)
+        );
+        let scope = ExportScope::Subtree { node: 0 };
+        assert_eq!(
+            s.export(ScanId(8), scope, &mut rows),
+            Err(SessionError::StaleScan)
+        );
+        assert!(rows.rows.is_empty());
     }
 }

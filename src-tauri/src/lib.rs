@@ -3,7 +3,9 @@
 mod access;
 mod actions;
 mod deletion_log;
+mod export;
 mod session;
+mod tray;
 mod volumes;
 
 use std::path::PathBuf;
@@ -15,9 +17,11 @@ use tauri::ipc::Channel;
 
 use access::{AccessError, DiskAccess};
 use actions::ActionError;
+use export::{ExportError, ExportReport, Format};
 use session::{
-    ChildrenPage, LargestEntry, LargestKind, NodeEntry, ScanEvent, ScanId, ScanSummary,
-    SessionError, Sessions, SortKey, SortOrder, SunburstSlice, TrashReport, TreemapSlice,
+    ChildrenPage, ExportScope, LargestEntry, LargestKind, NodeEntry, ScanEvent, ScanId,
+    ScanSummary, SessionError, Sessions, SortKey, SortOrder, SunburstSlice, TrashReport,
+    TreemapSlice,
 };
 use volumes::VolumeEntry;
 
@@ -167,6 +171,16 @@ fn open_node(
     actions::open(&sessions, scan, node)
 }
 
+/// Opens a terminal in the node, or in its folder if it is not a folder.
+#[tauri::command(async)]
+fn open_terminal(
+    sessions: tauri::State<'_, Sessions>,
+    scan: ScanId,
+    node: u32,
+) -> Result<(), ActionError> {
+    actions::open_terminal(&sessions, scan, node)
+}
+
 /// The node's full path, for the clipboard.
 #[tauri::command(async)]
 fn get_path(
@@ -214,6 +228,40 @@ fn delete_nodes(
     actions::delete(&sessions, scan, &nodes, log_dir.as_deref())
 }
 
+/// Asks where to save, then writes `scope` of the scan there as `format`.
+/// `None` when the user closes the save dialog. The dialog runs here, so the
+/// path never passes through the webview.
+#[tauri::command(async)]
+fn export_scan(
+    app: tauri::AppHandle,
+    sessions: tauri::State<'_, Sessions>,
+    scan: ScanId,
+    scope: ExportScope,
+    format: Format,
+) -> Result<Option<ExportReport>, ExportError> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let scope_path = sessions.path(scan, scope.node())?;
+    let scope_name = scope_path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let now = std::time::SystemTime::now();
+    let Some(chosen) = app
+        .dialog()
+        .file()
+        .set_file_name(export::default_name(&scope_name, format, now))
+        .add_filter(format.label(), &[format.extension()])
+        .blocking_save_file()
+    else {
+        return Ok(None);
+    };
+    let path = chosen.into_path().map_err(|e| ExportError::Dialog {
+        message: e.to_string(),
+    })?;
+    export::write_file(&sessions, scan, scope, format, &path, now).map(Some)
+}
+
 /// Best-effort macOS Full Disk Access status; `notApplicable` elsewhere.
 #[tauri::command(async)]
 fn disk_access() -> DiskAccess {
@@ -226,13 +274,57 @@ fn open_disk_access_settings() -> Result<(), AccessError> {
     access::open_settings()
 }
 
+/// Relabels the menu bar menu in the UI's language.
+#[tauri::command]
+fn set_tray_locale(app: tauri::AppHandle, locale: tray::Locale) {
+    tray::set_locale(&app, locale);
+}
+
+/// Whether Cleany starts at login.
+#[tauri::command(async)]
+fn launch_at_login(app: tauri::AppHandle) -> Result<bool, tray::LoginItemError> {
+    tray::starts_at_login(&app)
+}
+
+/// Turns starting at login on or off; returns the state the OS reports after.
+#[tauri::command(async)]
+fn set_launch_at_login(app: tauri::AppHandle, on: bool) -> Result<bool, tray::LoginItemError> {
+    tray::set_start_at_login(&app, on)
+}
+
 /// Builds and runs the Tauri application.
 ///
 /// # Panics
 /// Never by design: a startup failure is reported on stderr and the process exits non-zero.
 pub fn run() {
-    let result = tauri::Builder::default()
+    let app = tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(
+            tauri_plugin_autostart::Builder::new()
+                .args([tray::HIDDEN_ARG])
+                .build(),
+        )
         .manage(Sessions::default())
+        .setup(|app| {
+            tray::install(app.handle())?;
+            if std::env::args().any(|a| a == tray::HIDDEN_ARG)
+                && let Some(window) = app.get_webview_window(tray::MAIN_WINDOW)
+            {
+                window.hide()?;
+            }
+            Ok(())
+        })
+        .on_window_event(|window, event| {
+            // Closing keeps Cleany in the menu bar; "Quit" or Cmd+Q ends it.
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event
+                && window.label() == tray::MAIN_WINDOW
+            {
+                api.prevent_close();
+                if let Err(e) = window.hide() {
+                    eprintln!("cleany: hide window: {e}");
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             app_info,
             list_volumes,
@@ -246,15 +338,32 @@ pub fn run() {
             get_sunburst,
             reveal_node,
             open_node,
+            open_terminal,
             get_path,
             trash_nodes,
             delete_nodes,
+            export_scan,
             disk_access,
-            open_disk_access_settings
+            open_disk_access_settings,
+            set_tray_locale,
+            launch_at_login,
+            set_launch_at_login
         ])
-        .run(tauri::generate_context!());
-    if let Err(err) = result {
-        eprintln!("cleany: failed to start: {err}");
-        std::process::exit(1);
-    }
+        .build(tauri::generate_context!());
+    let app = match app {
+        Ok(app) => app,
+        Err(err) => {
+            eprintln!("cleany: failed to start: {err}");
+            std::process::exit(1);
+        }
+    };
+    app.run(|app, event| {
+        // A Dock click while the window is hidden brings it back.
+        #[cfg(target_os = "macos")]
+        if let tauri::RunEvent::Reopen { .. } = event {
+            tray::show_main(app);
+        }
+        #[cfg(not(target_os = "macos"))]
+        let _ = (app, event);
+    });
 }

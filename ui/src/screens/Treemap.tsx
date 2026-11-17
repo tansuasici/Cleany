@@ -11,7 +11,7 @@ import {
 import { formatBytes, formatCount, formatShare } from '../lib/format'
 import { type NodeEntry, type ScanId, type TreemapCell, type TreemapSlice, getTreemap } from '../lib/ipc'
 import { type Box, fit, hatch, rankTone, readRamp, useBox, useScheme } from '../canvas'
-import type { ActionTarget } from './useBrowseActions'
+import { type ActionTarget, type MenuAt, menuPoint } from './useBrowseActions'
 import { useLater } from '../useLater'
 import { useT } from '../useT'
 
@@ -98,6 +98,8 @@ export function Treemap({
   onUp,
   onExit,
   onSelect,
+  onMenu,
+  hint,
 }: {
   scan: ScanId
   node: NodeEntry
@@ -110,6 +112,10 @@ export function Treemap({
   onExit: () => void
   /** The selected block's node, or `null` for "others" and while loading. */
   onSelect: (target: ActionTarget | null) => void
+  /** Opens the item menu for the item just selected. */
+  onMenu: (at: MenuAt) => void
+  /** The short key hint shown at the right of the footer. */
+  hint: string
 }) {
   const { t, locale } = useT()
   const panel = useRef<HTMLDivElement>(null)
@@ -278,6 +284,15 @@ export function Treemap({
     open(top[i])
   }
 
+  // "Other items" is no one item, so it has no menu.
+  const onContextMenu = (e: MouseEvent<HTMLDivElement>) => {
+    const p = at(e)
+    const i = top.findIndex((c) => inside(c, p.x, p.y))
+    if (i < 0 || top[i].id === null) return
+    select(i)
+    onMenu(menuPoint(e))
+  }
+
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     if (e.target !== e.currentTarget) return
     const dirs: Record<string, Dir> = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down' }
@@ -312,14 +327,15 @@ export function Treemap({
       aria-label={label}
       aria-activedescendant={chosen ? `map-cell-${active}` : undefined}
       onKeyDown={onKeyDown}
-      className="mt-4 flex min-h-0 flex-1 flex-col rounded-panel border border-hairline bg-card focus-visible:border-accent focus-visible:outline-none"
+      className="mt-4 flex min-h-0 flex-1 flex-col rounded-panel border border-card-edge bg-card shadow-card focus-visible:border-accent focus-visible:outline-none"
     >
       <div
         ref={stage}
         onPointerMove={onPointerMove}
         onPointerLeave={() => setHover(null)}
         onClick={onClick}
-        className={`relative m-1 min-h-0 flex-1 overflow-hidden ${opens(hoveredTop) ? 'cursor-pointer' : ''}`}
+        onContextMenu={onContextMenu}
+        className={`relative m-2 min-h-0 flex-1 overflow-hidden rounded-control ${opens(hoveredTop) ? 'cursor-pointer' : ''}`}
       >
         <canvas
           ref={canvas}
@@ -352,7 +368,7 @@ export function Treemap({
         {hovered && hover && box && (
           <div
             aria-hidden
-            className="pointer-events-none absolute top-0 left-0 max-w-72 rounded-card border border-hairline bg-card px-3 py-2"
+            className="pointer-events-none absolute top-0 left-0 max-w-72 rounded-card border border-hairline bg-card px-3 py-2 shadow-float"
             style={{
               transform: `translate(${hover.x > box.w / 2 ? `calc(${hover.x - 12}px - 100%)` : `${hover.x + 12}px`}, ${
                 hover.y > box.h / 2 ? `calc(${hover.y - 12}px - 100%)` : `${hover.y + 12}px`
@@ -361,8 +377,8 @@ export function Treemap({
           >
             <bdi className="block truncate text-body font-medium">{nameOf(hovered)}</bdi>
             <span className="flex gap-3 text-secondary text-ink-2">
-              <span className="font-mono tabular-nums">{formatBytes(hovered.allocated, locale)}</span>
-              <span className="font-mono tabular-nums">{formatShare(hovered.allocated, node.allocated, locale)}</span>
+              <span className="tabular-nums">{formatBytes(hovered.allocated, locale)}</span>
+              <span className="tabular-nums">{formatShare(hovered.allocated, node.allocated, locale)}</span>
               {hovered.kind === 'dir' && (
                 <span className="tabular-nums">{t('browse.fileCount', { n: formatCount(hovered.files, locale), count: hovered.files })}</span>
               )}
@@ -380,16 +396,19 @@ export function Treemap({
       </div>
 
       {/* The selected block in full; the option already says it to a screen reader. */}
-      <p aria-hidden className="flex h-8 shrink-0 items-center gap-3 border-t border-hairline px-4 text-meta text-ink-2">
-        {chosen && (
-          <>
-            <bdi className="min-w-0 truncate" title={nameOf(chosen)}>
-              {nameOf(chosen)}
-            </bdi>
-            <span className="shrink-0 font-mono tabular-nums">{formatBytes(chosen.allocated, locale)}</span>
-          </>
-        )}
-      </p>
+      <div className="flex h-8 shrink-0 items-center gap-3 px-4 text-meta text-ink-2">
+        <span aria-hidden className="flex min-w-0 items-center gap-3">
+          {chosen && (
+            <>
+              <bdi className="min-w-0 truncate" title={nameOf(chosen)}>
+                {nameOf(chosen)}
+              </bdi>
+              <span className="shrink-0 tabular-nums">{formatBytes(chosen.allocated, locale)}</span>
+            </>
+          )}
+        </span>
+        <span className="ml-auto shrink-0 text-ink-3 max-md:hidden">{hint}</span>
+      </div>
     </div>
   )
 }

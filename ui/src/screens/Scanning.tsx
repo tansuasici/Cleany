@@ -37,7 +37,7 @@ export function ScanningScreen({ screen }: Props) {
         <Named text={t('scan.title', { name: NAME })} name={target.name} />
       </h1>
 
-      <div className="mt-8 rounded-panel border border-hairline bg-card p-4 sm:p-6">
+      <div className="mt-8 rounded-panel border border-card-edge bg-card p-4 shadow-card sm:p-6">
         {progress === null ? (
           // Same height as the figure line, so nothing jumps when the first count lands.
           <p className="flex min-h-11 items-center text-ink-2">{t('scan.starting')}</p>
@@ -85,7 +85,7 @@ function Counter({ label, value }: { label: string; value: string }) {
     <div className="flex min-w-0 items-baseline gap-2">
       <dt className="shrink-0">{label}</dt>
       <span className="leader" aria-hidden />
-      <dd className="shrink-0 font-mono text-ink tabular-nums">{value}</dd>
+      <dd className="shrink-0 text-ink tabular-nums">{value}</dd>
     </div>
   )
 }
