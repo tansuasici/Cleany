@@ -219,6 +219,25 @@ pub struct ExportRow {
     pub entry: NodeEntry,
 }
 
+/// Rows [`Sessions::export`] reads per lock, between progress reports.
+pub const EXPORT_BATCH: usize = 10_000;
+
+/// How far an export is, reported while it runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExportProgress {
+    /// Rows written so far.
+    pub rows: u64,
+    /// Rows expected, when known up front. For a whole-scan export it is an
+    /// upper bound; for a folder below the root it is not known.
+    pub total: Option<u64>,
+}
+
+/// What is left to write: rows already read, or a depth-first walk.
+enum ExportWork {
+    Rows(Vec<ExportRow>),
+    Walk(Vec<(NodeId, PathBuf, u32)>),
+}
+
 /// Where [`Sessions::export`] writes: a file format, or a list in tests.
 pub trait ExportSink {
     /// The sink's own failure, which also carries a [`SessionError`].
@@ -1134,72 +1153,129 @@ impl Sessions {
     }
 
     /// Writes the rows `scope` names to `sink` and returns how many were
-    /// written. The lock is held while writing, so the tree cannot change
-    /// under the export.
+    /// written. Rows are read in batches of [`EXPORT_BATCH`], and the lock is
+    /// released while a batch is written, so the app stays usable during a
+    /// long export. Items trashed meanwhile are left out from then on.
+    ///
+    /// `progress` is called once before the first row and after every
+    /// batch; an error from it stops the export with that error.
     ///
     /// # Errors
-    /// [`SessionError::StaleScan`], [`SessionError::NotReady`] or
-    /// [`SessionError::UnknownNode`], or the sink's own error.
+    /// [`SessionError::StaleScan`] (also when a newer scan replaces this one
+    /// midway), [`SessionError::NotReady`] or [`SessionError::UnknownNode`],
+    /// the sink's own error, or the one `progress` returned.
     pub fn export<S: ExportSink>(
         &self,
         id: ScanId,
         scope: ExportScope,
         sink: &mut S,
+        mut progress: impl FnMut(ExportProgress) -> Result<(), S::Error>,
     ) -> Result<u64, S::Error> {
-        let mut state = lock(&self.state);
-        let tree = &state.finished_mut(id)?.tree;
-        let start = tree
-            .node_id(scope.node())
-            .ok_or(SessionError::UnknownNode)?;
-        let scope_path = tree.path(start).ok_or(SessionError::UnknownNode)?;
-        let scan_root = tree.path(tree.root()).ok_or(SessionError::NotReady)?;
-        sink.head(&ExportHead {
-            scan_root,
-            scope_path: scope_path.clone(),
-        })?;
-        let mut rows = 0_u64;
-        let mut emit = |sink: &mut S, id: NodeId, path: PathBuf, depth: u32| {
-            let Some(entry) = entry(tree, id) else {
-                return Ok(());
+        let (head, work, total) = {
+            let mut state = lock(&self.state);
+            let tree = &state.finished_mut(id)?.tree;
+            let start = tree
+                .node_id(scope.node())
+                .ok_or(SessionError::UnknownNode)?;
+            let scope_path = tree.path(start).ok_or(SessionError::UnknownNode)?;
+            let scan_root = tree.path(tree.root()).ok_or(SessionError::NotReady)?;
+            let (work, total) = match scope {
+                ExportScope::Subtree { .. } => {
+                    // The arena size is only known for the whole scan; it
+                    // also counts trashed slots, so it is an upper bound.
+                    let total = (start == tree.root()).then(|| tree.len() as u64);
+                    (
+                        ExportWork::Walk(vec![(start, scope_path.clone(), 0)]),
+                        total,
+                    )
+                }
+                ExportScope::Children {
+                    sort: key, order, ..
+                } => {
+                    let rows: Vec<ExportRow> = sort(tree, start, key, order)
+                        .into_iter()
+                        .filter_map(|child| {
+                            let path = scope_path.join(tree.name(child)?);
+                            row(tree, child, path, 1)
+                        })
+                        .collect();
+                    let total = Some(rows.len() as u64);
+                    (ExportWork::Rows(rows), total)
+                }
+                ExportScope::Largest { largest, limit, .. } => {
+                    let limit = limit.min(MAX_PAGE) as usize;
+                    let ranked: Vec<NodeId> = match largest {
+                        LargestKind::Files => largest_files(tree, start, limit),
+                        LargestKind::Dirs => largest_dirs(tree, start, limit)
+                            .into_iter()
+                            .map(|(n, _)| n)
+                            .collect(),
+                    };
+                    let rows: Vec<ExportRow> = ranked
+                        .into_iter()
+                        .filter_map(|n| row(tree, n, tree.path(n)?, depth_below(tree, start, n)))
+                        .collect();
+                    let total = Some(rows.len() as u64);
+                    (ExportWork::Rows(rows), total)
+                }
             };
-            rows += 1;
-            sink.row(&ExportRow { path, depth, entry })
+            (
+                ExportHead {
+                    scan_root,
+                    scope_path,
+                },
+                work,
+                total,
+            )
         };
-        match scope {
-            ExportScope::Subtree { .. } => {
-                let mut stack = vec![(start, scope_path, 0_u32)];
-                while let Some((id, path, depth)) = stack.pop() {
-                    let children = sort(tree, id, SortKey::Allocated, SortOrder::Desc);
-                    for &child in children.iter().rev() {
-                        if let Some(name) = tree.name(child) {
-                            stack.push((child, path.join(name), depth + 1));
+
+        sink.head(&head)?;
+        let mut rows = 0_u64;
+        progress(ExportProgress { rows, total })?;
+        match work {
+            ExportWork::Rows(all) => {
+                for batch in all.chunks(EXPORT_BATCH) {
+                    for r in batch {
+                        sink.row(r)?;
+                    }
+                    rows += batch.len() as u64;
+                    progress(ExportProgress { rows, total })?;
+                }
+            }
+            ExportWork::Walk(mut stack) => {
+                let mut batch = Vec::with_capacity(EXPORT_BATCH);
+                while !stack.is_empty() {
+                    {
+                        let mut state = lock(&self.state);
+                        let tree = &state.finished_mut(id)?.tree;
+                        if rows > 0 {
+                            // Trash may have taken nodes out while unlocked.
+                            stack.retain(|(n, ..)| {
+                                u32::try_from(n.index())
+                                    .ok()
+                                    .and_then(|i| tree.node_id(i))
+                                    .is_some()
+                            });
+                        }
+                        while batch.len() < EXPORT_BATCH {
+                            let Some((n, path, depth)) = stack.pop() else {
+                                break;
+                            };
+                            let children = sort(tree, n, SortKey::Allocated, SortOrder::Desc);
+                            for &child in children.iter().rev() {
+                                if let Some(name) = tree.name(child) {
+                                    stack.push((child, path.join(name), depth + 1));
+                                }
+                            }
+                            batch.extend(row(tree, n, path, depth));
                         }
                     }
-                    emit(sink, id, path, depth)?;
-                }
-            }
-            ExportScope::Children {
-                sort: key, order, ..
-            } => {
-                for child in sort(tree, start, key, order) {
-                    if let Some(name) = tree.name(child) {
-                        emit(sink, child, scope_path.join(name), 1)?;
+                    for r in &batch {
+                        sink.row(r)?;
                     }
-                }
-            }
-            ExportScope::Largest { largest, limit, .. } => {
-                let limit = limit.min(MAX_PAGE) as usize;
-                let ranked: Vec<NodeId> = match largest {
-                    LargestKind::Files => largest_files(tree, start, limit),
-                    LargestKind::Dirs => largest_dirs(tree, start, limit)
-                        .into_iter()
-                        .map(|(n, _)| n)
-                        .collect(),
-                };
-                for n in ranked {
-                    if let Some(path) = tree.path(n) {
-                        emit(sink, n, path, depth_below(tree, start, n))?;
-                    }
+                    rows += batch.len() as u64;
+                    batch.clear();
+                    progress(ExportProgress { rows, total })?;
                 }
             }
         }
@@ -1472,6 +1548,14 @@ fn depth_below(tree: &Tree, scope: NodeId, node: NodeId) -> u32 {
     depth
 }
 
+fn row(tree: &Tree, id: NodeId, path: PathBuf, depth: u32) -> Option<ExportRow> {
+    Some(ExportRow {
+        path,
+        depth,
+        entry: entry(tree, id)?,
+    })
+}
+
 fn entry(tree: &Tree, id: NodeId) -> Option<NodeEntry> {
     let n = tree.node(id)?;
     Some(NodeEntry {
@@ -1544,11 +1628,11 @@ fn millis(d: std::time::Duration) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        CancelToken, ChildrenPage, Deletion, EntryKind, ExportHead, ExportRow, ExportScope,
-        ExportSink, Finished, Freed, LargestKind, MAX_SUNBURST_DEPTH, MAX_TREEMAP_DEPTH, NodeEntry,
-        RingArc, ScanEvent, ScanId, ScanIssue, ScanStats, ScanSummary, SessionError, Sessions,
-        SortKey, SortOrder, State, SunburstSlice, TrashItem, TrashOutcome, TrashReport,
-        TreemapCell, TreemapSlice, entry, lock, new_sink,
+        CancelToken, ChildrenPage, Deletion, EXPORT_BATCH, EntryKind, ExportHead, ExportProgress,
+        ExportRow, ExportScope, ExportSink, Finished, Freed, LargestKind, MAX_SUNBURST_DEPTH,
+        MAX_TREEMAP_DEPTH, NodeEntry, RingArc, ScanEvent, ScanId, ScanIssue, ScanStats,
+        ScanSummary, SessionError, Sessions, SortKey, SortOrder, State, SunburstSlice, TrashItem,
+        TrashOutcome, TrashReport, TreemapCell, TreemapSlice, entry, lock, new_sink,
     };
     use cleany_core::{EntryInfo, NodeFlags, NodeKind, ScanOptions, Size, Tree, TreeBuilder};
     use std::ffi::OsStr;
@@ -2577,9 +2661,109 @@ mod tests {
 
     fn export(s: &Sessions, id: ScanId, scope: ExportScope) -> Rows {
         let mut rows = Rows::default();
-        let n = s.export(id, scope, &mut rows).unwrap();
+        let n = s.export(id, scope, &mut rows, |_| Ok(())).unwrap();
         assert_eq!(n, rows.rows.len() as u64);
         rows
+    }
+
+    /// Root with `big` (one more batch of files than fits) and `small`
+    /// (one file), so a whole-scan export takes two batches.
+    fn wide_tree() -> Tree {
+        let mut b = TreeBuilder::new(OsStr::new("/r"), info(NodeKind::Dir, 0, 0)).unwrap();
+        let root = b.root();
+        let big = b
+            .add_child(root, OsStr::new("big"), info(NodeKind::Dir, 0, 0))
+            .unwrap();
+        for i in 0..EXPORT_BATCH + 5 {
+            b.add_child(
+                big,
+                OsStr::new(&format!("f{i}")),
+                info(NodeKind::File, 10, 0),
+            )
+            .unwrap();
+        }
+        let small = b
+            .add_child(root, OsStr::new("small"), info(NodeKind::Dir, 0, 0))
+            .unwrap();
+        b.add_child(small, OsStr::new("s"), info(NodeKind::File, 1, 0))
+            .unwrap();
+        b.finish()
+    }
+
+    #[test]
+    fn whole_scan_export_reports_progress_per_batch() {
+        let (s, id) = done(wide_tree());
+        let nodes = (EXPORT_BATCH + 9) as u64;
+        let mut rows = Rows::default();
+        let mut seen = Vec::new();
+        let n = s
+            .export(id, ExportScope::Subtree { node: 0 }, &mut rows, |p| {
+                seen.push(p);
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(n, nodes);
+        assert_eq!(rows.rows.len() as u64, nodes);
+        let total = Some(nodes);
+        let batch = EXPORT_BATCH as u64;
+        assert_eq!(
+            seen,
+            [
+                ExportProgress { rows: 0, total },
+                ExportProgress { rows: batch, total },
+                ExportProgress { rows: nodes, total },
+            ]
+        );
+    }
+
+    #[test]
+    fn export_releases_the_lock_between_batches() {
+        let (s, id) = done(wide_tree());
+        let small = child(&s, id, 0, "small");
+        let mut calls = Vec::new();
+        let mut rows = Rows::default();
+        let n = s
+            .export(id, ExportScope::Subtree { node: 0 }, &mut rows, |p| {
+                if p.rows == EXPORT_BATCH as u64 {
+                    // Would deadlock if the export still held the lock.
+                    s.trash(id, &[small], fake(&mut calls, TrashOutcome::Trashed))?;
+                }
+                Ok(())
+            })
+            .unwrap();
+        // `small` and its file come last, after the trash took them out.
+        assert_eq!(n, (EXPORT_BATCH + 7) as u64);
+        assert!(rows.rows.iter().all(|r| !r.path.starts_with("/r/small")));
+    }
+
+    #[test]
+    fn progress_error_stops_the_export() {
+        let (s, id) = done(wide_tree());
+        let mut rows = Rows::default();
+        let err = s.export(id, ExportScope::Subtree { node: 0 }, &mut rows, |p| {
+            if p.rows > 0 {
+                Err(SessionError::NotReady)
+            } else {
+                Ok(())
+            }
+        });
+        assert_eq!(err, Err(SessionError::NotReady));
+        assert_eq!(rows.rows.len(), EXPORT_BATCH);
+    }
+
+    #[test]
+    fn folder_export_has_no_total() {
+        let (s, id) = done(small_tree());
+        let c = child(&s, id, 0, "C");
+        let mut rows = Rows::default();
+        let mut seen = Vec::new();
+        s.export(id, ExportScope::Subtree { node: c }, &mut rows, |p| {
+            seen.push(p);
+            Ok(())
+        })
+        .unwrap();
+        assert!(seen.iter().all(|p| p.total.is_none()));
+        assert_eq!(seen.last().map(|p| p.rows), Some(2));
     }
 
     #[test]
@@ -2651,12 +2835,12 @@ mod tests {
         let mut rows = Rows::default();
         let scope = ExportScope::Subtree { node: u32::MAX };
         assert_eq!(
-            s.export(id, scope, &mut rows),
+            s.export(id, scope, &mut rows, |_| Ok(())),
             Err(SessionError::UnknownNode)
         );
         let scope = ExportScope::Subtree { node: 0 };
         assert_eq!(
-            s.export(ScanId(8), scope, &mut rows),
+            s.export(ScanId(8), scope, &mut rows, |_| Ok(())),
             Err(SessionError::StaleScan)
         );
         assert!(rows.rows.is_empty());

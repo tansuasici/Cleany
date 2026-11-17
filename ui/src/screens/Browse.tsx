@@ -3,7 +3,6 @@ import { createPortal } from 'react-dom'
 import { Button, CheckIcon, ChevronIcon, EmptyLine, LeaderRow, ShareBar, SkeletonRows } from '../components/ui'
 import { formatBytes, formatCount, formatDate, formatShare, truncateMiddle } from '../lib/format'
 import {
-  type ExportError,
   type ExportFormat,
   type ExportScope,
   type LargestKind,
@@ -15,10 +14,10 @@ import {
   getAncestors,
   getChildren,
   deleteNodes,
-  exportScan,
   trashNodes,
 } from '../lib/ipc'
 import { type BrowseScreen, useStore } from '../store'
+import { useExport } from '../exportJob'
 import { BasketBar } from './Basket'
 import {
   ActionBar,
@@ -131,6 +130,7 @@ export function BrowseView({ screen }: { screen: BrowseScreen }) {
   const refreshBasket = useStore((s) => s.refreshBasket)
   const history = useStore((s) => s.history)
   const go = useStore((s) => s.go)
+  const startExport = useExport((s) => s.start)
   const { done, node } = screen
   const scan = done.summary.scan
   const [sort, setSort] = useState<Sort>({ key: 'allocated', order: 'desc' })
@@ -215,21 +215,8 @@ export function BrowseView({ screen }: { screen: BrowseScreen }) {
           : t('basket.added', { name: at.name })
     setNote({ status, alert: '' })
   }
-  // The save dialog runs in the app; a closed dialog leaves no note.
-  const runExport = async (scope: ExportScope, format: ExportFormat) => {
-    setNote(null)
-    try {
-      const report = await exportScan(scan, scope, format)
-      if (report)
-        setNote({
-          status: t('export.done', { n: formatCount(report.rows, locale), count: report.rows, file: report.fileName }),
-          alert: '',
-        })
-    } catch (e) {
-      const stale = (e as ExportError | undefined)?.kind === 'staleScan'
-      setNote({ status: '', alert: t(stale ? 'export.stale' : 'export.error') })
-    }
-  }
+  // Progress and the result show above the screen (ExportStatus).
+  const runExport = (scope: ExportScope, format: ExportFormat) => startExport(scan, scope, format)
   // What is on screen: the folder's rows in the table's order (the map and the
   // rings show them by size), or the largest list as it stands.
   const viewScope = (): ExportScope =>
@@ -816,7 +803,7 @@ function Table({
         className={`${cols} absolute inset-x-0 top-0 h-8 cursor-pointer items-center rounded-control text-body ${
           // Keyboard focus sits on the grid; the ring goes on the active row, where the eye is.
           selected
-            ? 'bg-raised group-focus-visible:outline-2 group-focus-visible:-outline-offset-2 group-focus-visible:outline-accent'
+            ? 'bg-raised'
             : 'hover:bg-raised/50'
         }`}
         style={{ transform: `translateY(${i * ROW}px)` }}
@@ -877,7 +864,7 @@ function Table({
       onContextMenu={(e) => {
         if (e.target === e.currentTarget && row(active)) onMenu(menuPoint(e))
       }}
-      className="group mt-4 flex min-h-0 flex-1 flex-col rounded-panel border border-card-edge bg-card shadow-card focus-visible:border-accent focus-visible:outline-none"
+      className="group mt-4 flex min-h-0 flex-1 flex-col rounded-panel border border-card-edge bg-card shadow-card focus-visible:outline-none"
     >
       <div role="row" aria-rowindex={1} className={`${cols} h-8 shrink-0 items-center border-b border-hairline text-secondary text-ink-2`}>
         {columns.map((c, i) => {

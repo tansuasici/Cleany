@@ -187,7 +187,7 @@ export function Largest({
         onContextMenu={(e) => {
           if (e.target === e.currentTarget && selected) onMenu(menuPoint(e))
         }}
-        className="group mt-2 flex min-h-0 flex-1 flex-col rounded-panel border border-card-edge bg-card shadow-card focus-visible:border-accent focus-visible:outline-none"
+        className="group mt-2 flex min-h-0 flex-1 flex-col rounded-panel border border-card-edge bg-card shadow-card focus-visible:outline-none"
       >
         <div role="row" aria-rowindex={1} className={`${cols} h-8 shrink-0 items-center border-b border-hairline text-secondary text-ink-2`}>
           <span role="columnheader">{t('browse.name')}</span>
@@ -245,7 +245,7 @@ export function Largest({
                   className={`${cols} h-8 cursor-pointer items-center rounded-control text-body ${
                     // Keyboard focus sits on the grid; the ring goes on the active row, where the eye is.
                     i === at
-                      ? 'bg-raised group-focus-visible:outline-2 group-focus-visible:-outline-offset-2 group-focus-visible:outline-accent'
+                      ? 'bg-raised'
                       : 'hover:bg-raised/50'
                   }`}
                 >
