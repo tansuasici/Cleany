@@ -1,4 +1,5 @@
-//! Moving items to the OS trash, and the paths Cleany never trashes.
+//! Moving items to the OS trash, deleting them for good, and the paths
+//! Cleany never removes.
 //!
 //! The path to trash is never canonicalized: a symlink is trashed as the link,
 //! not its target. Only the protection checks resolve paths, to compare them.
@@ -70,6 +71,75 @@ fn context() -> trash::TrashContext {
 #[cfg(not(target_os = "macos"))]
 fn context() -> trash::TrashContext {
     trash::TrashContext::new()
+}
+
+/// Why an item could not be deleted permanently.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DeleteError {
+    /// The item no longer exists.
+    Gone,
+    /// The OS refused or failed, possibly part way through a folder; the
+    /// text is for the log.
+    Failed(String),
+}
+
+impl fmt::Display for DeleteError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Gone => f.write_str("the item no longer exists"),
+            Self::Failed(message) => write!(f, "cannot delete: {message}"),
+        }
+    }
+}
+
+impl std::error::Error for DeleteError {}
+
+/// Deletes `path` from disk without the trash; there is no undo. A symlink
+/// (or a Windows junction) is removed as the link and what it points at
+/// stays. A folder goes with everything in it; `std::fs::remove_dir_all`
+/// never follows links inside it. Read-only items are not made writable: if
+/// the OS refuses, that is the error.
+///
+/// Callers make the protection checks first ([`Protection::covers`]).
+///
+/// # Errors
+/// [`DeleteError::Gone`] when nothing is at `path`, [`DeleteError::Failed`]
+/// when the OS does not delete it. A folder may then be partly deleted.
+pub fn delete_permanently(path: &Path) -> Result<(), DeleteError> {
+    let meta = match std::fs::symlink_metadata(path) {
+        Ok(meta) => meta,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Err(DeleteError::Gone),
+        Err(e) => return Err(DeleteError::Failed(e.to_string())),
+    };
+    let kind = meta.file_type();
+    let result = if kind.is_dir() {
+        std::fs::remove_dir_all(path)
+    } else if link_to_dir(&kind) {
+        std::fs::remove_dir(path)
+    } else {
+        std::fs::remove_file(path)
+    };
+    result.map_err(|e| {
+        // Removed by someone else between the check and the delete.
+        if std::fs::symlink_metadata(path).is_err() {
+            DeleteError::Gone
+        } else {
+            DeleteError::Failed(e.to_string())
+        }
+    })
+}
+
+/// A Windows directory symlink or junction, which goes with `remove_dir`.
+#[cfg(windows)]
+fn link_to_dir(kind: &std::fs::FileType) -> bool {
+    use std::os::windows::fs::FileTypeExt;
+    kind.is_symlink_dir()
+}
+
+/// Elsewhere every symlink goes with `remove_file`.
+#[cfg(not(windows))]
+const fn link_to_dir(_kind: &std::fs::FileType) -> bool {
+    false
 }
 
 /// What Cleany refuses to trash, gathered once per request: the home folder,
@@ -182,7 +252,7 @@ fn same_entry(a: &Path, b: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{TrashError, is_protected_with, move_to_trash};
+    use super::{DeleteError, TrashError, delete_permanently, is_protected_with, move_to_trash};
     use crate::protected::Protected;
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -301,6 +371,42 @@ mod tests {
     fn missing_item_is_gone_without_touching_the_trash() {
         let dir = scratch("gone");
         assert_eq!(move_to_trash(&dir.join("nope")), Err(TrashError::Gone));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn deletes_files_and_folders_and_reports_missing() {
+        let dir = scratch("delete");
+        let file = dir.join("a.txt");
+        fs::write(&file, b"a").unwrap();
+        fs::create_dir_all(dir.join("tree/sub")).unwrap();
+        fs::write(dir.join("tree/sub/b.txt"), b"b").unwrap();
+
+        delete_permanently(&file).unwrap();
+        assert!(fs::symlink_metadata(&file).is_err());
+        delete_permanently(&dir.join("tree")).unwrap();
+        assert!(fs::symlink_metadata(dir.join("tree")).is_err());
+        assert_eq!(delete_permanently(&file), Err(DeleteError::Gone));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn deleting_a_link_keeps_its_target() {
+        let dir = scratch("delete-link");
+        let real = dir.join("real");
+        fs::create_dir_all(&real).unwrap();
+        fs::write(real.join("keep.txt"), b"keep").unwrap();
+        std::os::unix::fs::symlink(&real, dir.join("link")).unwrap();
+        // A link inside a deleted folder is not followed either.
+        fs::create_dir_all(dir.join("box")).unwrap();
+        std::os::unix::fs::symlink(&real, dir.join("box/inner")).unwrap();
+
+        delete_permanently(&dir.join("link")).unwrap();
+        delete_permanently(&dir.join("box")).unwrap();
+        assert!(fs::symlink_metadata(dir.join("link")).is_err());
+        assert!(fs::symlink_metadata(dir.join("box")).is_err());
+        assert_eq!(fs::read(real.join("keep.txt")).unwrap(), b"keep");
         fs::remove_dir_all(&dir).unwrap();
     }
 

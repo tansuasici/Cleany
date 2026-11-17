@@ -9,13 +9,14 @@ import {
   type TrashReport,
   getAncestors,
   getChildren,
+  deleteNodes,
   trashNodes,
 } from '../lib/ipc'
 import { type BrowseScreen, useStore } from '../store'
 import { BasketBar } from './Basket'
-import { ActionBar, BasketTrashDialog, type TrashNote, TrashDialog } from './BrowseActions'
+import { ActionBar, BasketTrashDialog, type Removal, type TrashNote, TrashDialog } from './BrowseActions'
 import { useOs } from '../useOs'
-import { type ActionTarget, actionKeys, trashKey, useBrowseActions } from './useBrowseActions'
+import { type ActionTarget, actionKeys, deleteKey, trashKey, useBrowseActions } from './useBrowseActions'
 import { Sunburst } from './Sunburst'
 import { Treemap } from './Treemap'
 import { useT } from '../useT'
@@ -82,7 +83,7 @@ function historyKeys(mac: boolean, go: (step: -1 | 1) => void) {
 }
 
 /** The trash question on show: one item, or the whole basket. */
-type Asking = { kind: 'one'; target: ActionTarget } | { kind: 'basket' }
+type Asking = { kind: 'one'; target: ActionTarget; removal: Removal } | { kind: 'basket'; removal: Removal }
 
 const NO_ITEMS: readonly number[] = []
 
@@ -96,6 +97,7 @@ export function BrowseView({ screen }: { screen: BrowseScreen }) {
   const showSummary = useStore((s) => s.showSummary)
   const trashed = useStore((s) => s.trashed)
   const basket = useStore((s) => s.basket)
+  const permanentDelete = useStore((s) => s.permanentDelete)
   const addToBasket = useStore((s) => s.addToBasket)
   const removeFromBasket = useStore((s) => s.removeFromBasket)
   const clearBasket = useStore((s) => s.clearBasket)
@@ -134,7 +136,10 @@ export function BrowseView({ screen }: { screen: BrowseScreen }) {
   const [rev, setRev] = useState(0)
   const canTrash = target.id !== done.summary.root.id
   const askTrash = () => {
-    if (canTrash && !asking) setAsking({ kind: 'one', target })
+    if (canTrash && !asking) setAsking({ kind: 'one', target, removal: 'trash' })
+  }
+  const askDelete = () => {
+    if (permanentDelete && canTrash && !asking) setAsking({ kind: 'one', target, removal: 'delete' })
   }
 
   const basketItems = basket?.scan === scan ? basket.items : null
@@ -179,33 +184,41 @@ export function BrowseView({ screen }: { screen: BrowseScreen }) {
     setNote({ status, alert: '' })
   }
   const askBasket = () => {
-    if (basketItems && !asking) setAsking({ kind: 'basket' })
+    if (basketItems && !asking) setAsking({ kind: 'basket', removal: 'trash' })
+  }
+  const askBasketDelete = () => {
+    if (permanentDelete && basketItems && !asking) setAsking({ kind: 'basket', removal: 'delete' })
   }
 
-  const describe = (report: TrashReport): TrashNote => {
+  const describe = (report: TrashReport, removal: Removal): TrashNote => {
+    const many = removal === 'trash' ? 'basket.done' : 'delete.basketDone'
+    const one = removal === 'trash' ? 'trash.done' : 'delete.done'
     const alerts: string[] = []
     let status = ''
     for (const item of report.items) {
       const name = item.name
       switch (item.outcome.kind) {
         case 'trashed':
+        case 'deleted':
           status =
             report.trashed > 1
-              ? t('basket.done', {
+              ? t(many, {
                   n: formatCount(report.trashed, locale),
                   count: report.trashed,
                   size: formatBytes(report.freed.allocated, locale),
                 })
-              : t('trash.done', { name, size: formatBytes(report.freed.allocated, locale) })
+              : t(one, { name, size: formatBytes(report.freed.allocated, locale) })
           break
         case 'gone':
           alerts.push(t('trash.gone', { name }))
           break
         case 'protected':
-          alerts.push(t('trash.protected', { name }))
+          alerts.push(t(removal === 'trash' ? 'trash.protected' : 'delete.protected', { name }))
           break
         case 'failed':
-          alerts.push(t('trash.failed', { name, reason: item.outcome.message }))
+          alerts.push(
+            t(removal === 'trash' ? 'trash.failed' : 'delete.failed', { name, reason: item.outcome.message }),
+          )
           break
       }
     }
@@ -253,21 +266,22 @@ export function BrowseView({ screen }: { screen: BrowseScreen }) {
     if (!asking) return
     const ids = asking.kind === 'one' ? [asking.target.id] : (basketItems ?? []).map((b) => b.id)
     if (ids.length === 0) return
+    const { removal } = asking
     setWorking(true)
     let report: TrashReport
     try {
-      report = await trashNodes(scan, ids)
+      report = await (removal === 'trash' ? trashNodes : deleteNodes)(scan, ids)
     } catch {
-      setNote({ status: '', alert: t('trash.error') })
+      setNote({ status: '', alert: t(removal === 'trash' ? 'trash.error' : 'delete.error') })
       return
     } finally {
       // Closed before the view is rebuilt, so focus can go back to it.
       setWorking(false)
       setAsking(null)
     }
-    setNote(describe(report))
+    setNote(describe(report, removal))
     if (report.root) trashed(scan, report.root)
-    if (report.items.some((i) => i.outcome.kind === 'trashed' || i.outcome.kind === 'gone')) {
+    if (report.items.some((i) => i.outcome.kind === 'trashed' || i.outcome.kind === 'deleted' || i.outcome.kind === 'gone')) {
       // Drops what went and what was inside it; protected and failed items stay.
       await refreshBasket(scan)
       setPicked(null)
@@ -318,6 +332,7 @@ export function BrowseView({ screen }: { screen: BrowseScreen }) {
       onKeyDown={actionKeys(actions, () => void toggleBasket())}
       onKeyDownCapture={(e) => {
         trashKey(mac, askTrash)(e)
+        if (permanentDelete) deleteKey(mac, askDelete)(e)
         historyKeys(mac, step)(e)
       }}
       className="mx-auto flex h-full w-full max-w-240 flex-col px-8 pt-8 pb-4">
@@ -424,12 +439,15 @@ export function BrowseView({ screen }: { screen: BrowseScreen }) {
           onTrash={askTrash}
           inBasket={inBasket}
           onBasket={() => void toggleBasket()}
+          permanent={permanentDelete}
+          onDelete={askDelete}
           note={note}
         />
         {basketItems && (
           <BasketBar
             basket={{ scan, items: basketItems }}
             onTrash={askBasket}
+            onDelete={permanentDelete ? askBasketDelete : undefined}
             onRemove={removeFromBasket}
             onClear={clearBasket}
           />
@@ -439,6 +457,7 @@ export function BrowseView({ screen }: { screen: BrowseScreen }) {
 
       {asking?.kind === 'one' && (
         <TrashDialog
+          removal={asking.removal}
           scan={scan}
           target={asking.target}
           working={working}
@@ -448,6 +467,7 @@ export function BrowseView({ screen }: { screen: BrowseScreen }) {
       )}
       {asking?.kind === 'basket' && basketItems && (
         <BasketTrashDialog
+          removal={asking.removal}
           items={basketItems}
           working={working}
           onCancel={() => setAsking(null)}

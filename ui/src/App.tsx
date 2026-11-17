@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { LocaleMenu } from './components/LocaleMenu'
+import { SettingsDialog } from './components/SettingsDialog'
 import { AppIcon, Button, ChevronIcon } from './components/ui'
 import type { NodeEntry } from './lib/ipc'
 import { BrowseView } from './screens/Browse'
@@ -56,8 +56,8 @@ export default function App() {
         </button>
         <span aria-hidden className="h-5 w-px shrink-0 bg-hairline" />
         <Trail screen={screen} />
-        <div className="ml-auto shrink-0">
-          <LocaleMenu />
+        <div className="ml-auto flex shrink-0 items-center">
+          <SettingsDialog />
         </div>
       </header>
 

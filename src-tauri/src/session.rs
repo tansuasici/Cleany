@@ -369,7 +369,7 @@ impl fmt::Display for SessionError {
 
 impl std::error::Error for SessionError {}
 
-/// What happened to one item sent to the trash.
+/// What happened to one item sent to the trash or deleted for good.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(
     tag = "kind",
@@ -379,6 +379,8 @@ impl std::error::Error for SessionError {}
 pub enum TrashOutcome {
     /// Moved to the OS trash.
     Trashed,
+    /// Deleted from disk for good, without the trash.
+    Deleted,
     /// It no longer existed on disk.
     Gone,
     /// Cleany never trashes it: the scan root, a filesystem root, the home
@@ -422,9 +424,10 @@ pub struct TrashReport {
     /// One entry per item handled, in request order; a node already covered
     /// by a requested ancestor is left out.
     pub items: Vec<TrashItem>,
-    /// Space freed by the trashed items.
+    /// Space freed by the items this request removed from disk.
     pub freed: Freed,
-    /// How many items were trashed.
+    /// How many items this request removed from disk, to the trash or for
+    /// good.
     pub trashed: u32,
     /// The root with its new totals, or `None` when a newer scan replaced
     /// this one meanwhile (the new tree is then left alone).
@@ -1033,14 +1036,15 @@ impl Sessions {
         let mut deletions = Vec::with_capacity(plan.len());
         for p in plan {
             let outcome = p.outcome.unwrap_or(TrashOutcome::Protected);
-            let gone_from_disk = matches!(outcome, TrashOutcome::Trashed | TrashOutcome::Gone);
+            let removed = matches!(outcome, TrashOutcome::Trashed | TrashOutcome::Deleted);
+            let gone_from_disk = removed || outcome == TrashOutcome::Gone;
             // `None` here means another request already took it out.
             let detached = match finished.as_deref_mut() {
                 Some(f) if gone_from_disk => f.tree.detach(p.id).is_some(),
                 Some(_) => false,
                 None => true,
             };
-            if outcome == TrashOutcome::Trashed {
+            if removed {
                 report.trashed += 1;
                 if detached {
                     report.freed.logical += p.freed.logical;
@@ -1906,6 +1910,21 @@ mod tests {
     }
 
     #[test]
+    fn deleted_items_leave_the_tree_and_count_as_freed() {
+        let (s, id) = done(small_tree());
+        let a = child(&s, id, 0, "a");
+        let mut calls = Vec::new();
+        let report = s
+            .trash(id, &[a], fake(&mut calls, TrashOutcome::Deleted))
+            .unwrap()
+            .0;
+        assert_eq!(report.items[0].outcome, TrashOutcome::Deleted);
+        assert_eq!((report.trashed, report.freed.allocated), (1, 100));
+        assert_eq!(report.root.unwrap().allocated, 500);
+        assert_eq!(s.path(id, a), Err(SessionError::UnknownNode));
+    }
+
+    #[test]
     fn trash_failure_keeps_the_node() {
         let (s, id) = done(small_tree());
         let a = child(&s, id, 0, "a");
@@ -2145,6 +2164,7 @@ mod tests {
             serde_json::to_value(TrashReport {
                 items: vec![
                     item(TrashOutcome::Trashed),
+                    item(TrashOutcome::Deleted),
                     item(TrashOutcome::Gone),
                     item(TrashOutcome::Protected),
                     item(TrashOutcome::Failed {

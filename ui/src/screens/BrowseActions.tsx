@@ -15,6 +15,9 @@ const Kbd = ({ children }: { children: string }) => (
   </kbd>
 )
 
+/** How a confirmed removal leaves the disk: through the OS trash, or for good. */
+export type Removal = 'trash' | 'delete'
+
 /** What the last move to the trash came to; `alert` lists what did not go. */
 export interface TrashNote {
   status: string
@@ -30,6 +33,8 @@ export function ActionBar({
   onTrash,
   inBasket,
   onBasket,
+  permanent,
+  onDelete,
   note,
 }: {
   target: ActionTarget
@@ -40,6 +45,9 @@ export function ActionBar({
   onTrash: () => void
   inBasket: boolean
   onBasket: () => void
+  /** Settings allow permanent delete, so its button is shown. */
+  permanent: boolean
+  onDelete: () => void
   note: TrashNote | null
 }) {
   const { t } = useT()
@@ -90,6 +98,19 @@ export function ActionBar({
           {t(inBasket ? 'basket.remove' : 'basket.add')}
           <Kbd>{t('basket.key')}</Kbd>
         </Button>
+        {permanent && (
+          <Button
+            onClick={onDelete}
+            disabled={!canTrash}
+            title={canTrash ? undefined : t('actions.deleteRoot')}
+            aria-describedby="browse-action-target"
+            aria-keyshortcuts={mac ? 'Alt+Meta+Backspace' : 'Shift+Delete'}
+            aria-haspopup="dialog"
+          >
+            {t('actions.delete')}
+            <Kbd>{mac ? '⌥⌘⌫' : 'Shift+Delete'}</Kbd>
+          </Button>
+        )}
       </div>
       {/* Both regions stay mounted so a change is announced. Shown at once:
           the feedback answers a keypress, and keys don't animate. */}
@@ -110,22 +131,29 @@ export function ActionBar({
  * appears without animation.
  */
 function TrashConfirm({
+  removal,
   title,
   children,
   working,
   onCancel,
   onConfirm,
 }: {
+  removal: Removal
   title: string
   children: ReactNode
   working: boolean
   onCancel: () => void
   onConfirm: () => void
 }) {
-  const { t } = useT()
+  const { t, locale } = useT()
   const ref = useRef<HTMLDialogElement>(null)
   const titleId = useId()
   const detailId = useId()
+  const wordId = useId()
+  const [typed, setTyped] = useState('')
+  const word = t('delete.word')
+  // A permanent delete waits for the word typed out; a move to the trash does not.
+  const ready = removal === 'trash' || typed.trim().toLocaleLowerCase(locale) === word
 
   useEffect(() => {
     const dialog = ref.current
@@ -156,30 +184,65 @@ function TrashConfirm({
       </h2>
       <div id={detailId} className="mt-2 flex flex-col text-body text-ink-2">
         {children}
-        <p className="mt-4">{t('trash.undo')}</p>
+        <p className="mt-4">{t(removal === 'trash' ? 'trash.undo' : 'delete.warning')}</p>
       </div>
-      <div className="mt-6 flex flex-wrap justify-end gap-2">
-        {/* First in the dialog, so focus lands on the safe choice. */}
-        <Button onClick={onCancel} disabled={working} autoFocus>
-          {t('trash.cancel')}
-          <Kbd>Esc</Kbd>
-        </Button>
-        <Button variant="primary" onClick={onConfirm} disabled={working} aria-busy={working}>
-          {working ? t('trash.working') : t('trash.confirm')}
-        </Button>
-      </div>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault()
+          if (ready && !working) onConfirm()
+        }}
+      >
+        {removal === 'delete' && (
+          <div className="mt-4 flex flex-col gap-1">
+            <label htmlFor={wordId} className="text-body text-ink">
+              {t('delete.prompt', { word })}
+            </label>
+            {/* Focus lands here: typing is the way forward, Escape the way out. */}
+            <input
+              id={wordId}
+              value={typed}
+              onChange={(e) => setTyped(e.target.value)}
+              disabled={working}
+              autoFocus
+              autoComplete="off"
+              autoCapitalize="off"
+              autoCorrect="off"
+              spellCheck={false}
+              className="h-8 rounded-control border border-edge bg-card px-2 text-body text-ink"
+            />
+          </div>
+        )}
+        <div className="mt-6 flex flex-wrap justify-end gap-2">
+          {/* First in the dialog, so focus lands on the safe choice. */}
+          <Button type="button" onClick={onCancel} disabled={working} autoFocus={removal === 'trash'}>
+            {t('trash.cancel')}
+            <Kbd>Esc</Kbd>
+          </Button>
+          <Button type="submit" variant="primary" disabled={working || !ready} aria-busy={working}>
+            {removal === 'trash'
+              ? working
+                ? t('trash.working')
+                : t('trash.confirm')
+              : working
+                ? t('delete.working')
+                : t('delete.confirm')}
+          </Button>
+        </div>
+      </form>
     </dialog>
   )
 }
 
 /** Asks before moving `target` to the trash. */
 export function TrashDialog({
+  removal,
   scan,
   target,
   working,
   onCancel,
   onConfirm,
 }: {
+  removal: Removal
   scan: ScanId
   target: ActionTarget
   working: boolean
@@ -211,7 +274,13 @@ export function TrashDialog({
         : t('trash.file')
 
   return (
-    <TrashConfirm title={t('trash.title', { name: target.name })} working={working} onCancel={onCancel} onConfirm={onConfirm}>
+    <TrashConfirm
+      removal={removal}
+      title={t(removal === 'trash' ? 'trash.title' : 'delete.title', { name: target.name })}
+      working={working}
+      onCancel={onCancel}
+      onConfirm={onConfirm}
+    >
       <p className="min-h-5 tabular-nums">{detail}</p>
       {/* The döküm's line, once: what this move gives back. */}
       <p className="mt-4 min-h-5 text-ink">
@@ -226,11 +295,13 @@ const LISTED = 5
 
 /** Asks before moving every basket item to the trash. */
 export function BasketTrashDialog({
+  removal,
   items,
   working,
   onCancel,
   onConfirm,
 }: {
+  removal: Removal
   items: BasketItem[]
   working: boolean
   onCancel: () => void
@@ -242,7 +313,13 @@ export function BasketTrashDialog({
   const total = items.reduce((sum, item) => sum + item.allocated, 0)
   const rest = count - LISTED
   return (
-    <TrashConfirm title={t('basket.trashTitle', { n, count })} working={working} onCancel={onCancel} onConfirm={onConfirm}>
+    <TrashConfirm
+      removal={removal}
+      title={t(removal === 'trash' ? 'basket.trashTitle' : 'delete.basketTitle', { n, count })}
+      working={working}
+      onCancel={onCancel}
+      onConfirm={onConfirm}
+    >
       <ul className="flex flex-col">
         {items.slice(0, LISTED).map((item) => (
           <li key={item.id} className="h-6 leading-6">

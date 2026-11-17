@@ -1,4 +1,4 @@
-//! Show, open, copy-path and move-to-trash for scanned nodes. The UI names a
+//! Show, open, copy-path, move-to-trash and delete for scanned nodes. The UI names a
 //! node; the path always comes from the scan tree, never from the webview.
 //!
 //! Mirrors `ActionError` in `ui/src/lib/ipc.ts`;
@@ -9,11 +9,11 @@ use std::path::Path;
 
 use cleany_core::NodeKind;
 use cleany_platform::shell::{self, ShellError};
-use cleany_platform::trash::{self as os_trash, Protection, TrashError};
+use cleany_platform::trash::{self as os_trash, DeleteError, Protection, TrashError};
 use serde::Serialize;
 
-use crate::deletion_log;
-use crate::session::{ScanId, SessionError, Sessions, TrashOutcome, TrashReport};
+use crate::deletion_log::{self, Removal};
+use crate::session::{Deletion, ScanId, SessionError, Sessions, TrashOutcome, TrashReport};
 
 /// Why a show / open / copy-path request failed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -111,37 +111,91 @@ pub fn trash(
     let (report, deletions) = sessions.trash(scan, nodes, |path, kind, root| {
         move_one(&protection, path, kind, root)
     })?;
-    if let Some(dir) = log_dir
-        && let Err(e) = deletion_log::append_trash(dir, &deletions)
-    {
-        eprintln!("cleany: deletion log: {e}");
-    }
+    log(log_dir, Removal::Trash, &deletions);
     Ok(report)
 }
 
-/// Trashes one item after the checks the tree cannot make: the protected
-/// paths on disk, and that the item still is what the scan saw.
+/// Deletes `nodes` from disk for good, skipping the trash, and takes them
+/// out of the scan tree. Same checks, report and log as [`trash`]; the UI
+/// asks for a typed confirmation first.
+pub fn delete(
+    sessions: &Sessions,
+    scan: ScanId,
+    nodes: &[u32],
+    log_dir: Option<&Path>,
+) -> Result<TrashReport, ActionError> {
+    let protection = Protection::current();
+    let (report, deletions) = sessions.trash(scan, nodes, |path, kind, root| {
+        remove_one(&protection, path, kind, root)
+    })?;
+    log(log_dir, Removal::Delete, &deletions);
+    Ok(report)
+}
+
+/// Appends to the deletion log; a failure goes to stderr only.
+fn log(log_dir: Option<&Path>, removal: Removal, deletions: &[Deletion]) {
+    if let Some(dir) = log_dir
+        && let Err(e) = deletion_log::append(dir, removal, deletions)
+    {
+        eprintln!("cleany: deletion log: {e}");
+    }
+}
+
+/// The checks the tree cannot make: the protected paths on disk, and that
+/// the item still is what the scan saw. `Some` stops the removal.
+fn precheck(
+    protection: &Protection,
+    path: &Path,
+    kind: NodeKind,
+    scan_root: &Path,
+) -> Option<TrashOutcome> {
+    let Ok(meta) = std::fs::symlink_metadata(path) else {
+        return Some(TrashOutcome::Gone);
+    };
+    if protection.covers(path, scan_root) {
+        return Some(TrashOutcome::Protected);
+    }
+    if !same_kind(meta.file_type(), kind) {
+        return Some(TrashOutcome::Failed {
+            message: "changed kind since the scan".to_owned(),
+        });
+    }
+    None
+}
+
+/// Trashes one item after [`precheck`].
 fn move_one(
     protection: &Protection,
     path: &Path,
     kind: NodeKind,
     scan_root: &Path,
 ) -> TrashOutcome {
-    let Ok(meta) = std::fs::symlink_metadata(path) else {
-        return TrashOutcome::Gone;
-    };
-    if protection.covers(path, scan_root) {
-        return TrashOutcome::Protected;
-    }
-    if !same_kind(meta.file_type(), kind) {
-        return TrashOutcome::Failed {
-            message: "changed kind since the scan".to_owned(),
-        };
+    if let Some(stop) = precheck(protection, path, kind, scan_root) {
+        return stop;
     }
     match os_trash::move_to_trash(path) {
         Ok(()) => TrashOutcome::Trashed,
         Err(TrashError::Gone) => TrashOutcome::Gone,
         Err(e @ TrashError::Failed(_)) => TrashOutcome::Failed {
+            message: e.to_string(),
+        },
+    }
+}
+
+/// Deletes one item for good after [`precheck`].
+fn remove_one(
+    protection: &Protection,
+    path: &Path,
+    kind: NodeKind,
+    scan_root: &Path,
+) -> TrashOutcome {
+    if let Some(stop) = precheck(protection, path, kind, scan_root) {
+        return stop;
+    }
+    match os_trash::delete_permanently(path) {
+        Ok(()) => TrashOutcome::Deleted,
+        Err(DeleteError::Gone) => TrashOutcome::Gone,
+        Err(e @ DeleteError::Failed(_)) => TrashOutcome::Failed {
             message: e.to_string(),
         },
     }
@@ -159,7 +213,7 @@ fn same_kind(ft: std::fs::FileType, kind: NodeKind) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{ActionError, move_one};
+    use super::{ActionError, move_one, remove_one};
     use crate::session::{SessionError, TrashOutcome};
     use cleany_core::NodeKind;
     use cleany_platform::shell::ShellError;
@@ -203,6 +257,34 @@ mod tests {
     }
 
     #[test]
+    fn remove_one_checks_before_deleting() {
+        let dir = std::env::temp_dir().join(format!("cleany-remove-one-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("sub")).unwrap();
+        fs::write(dir.join("f"), b"x").unwrap();
+        let p = Protection::current();
+        assert_eq!(
+            remove_one(&p, &dir.join("nope"), NodeKind::File, &dir),
+            TrashOutcome::Gone
+        );
+        assert_eq!(
+            remove_one(&p, &dir, NodeKind::Dir, &dir),
+            TrashOutcome::Protected
+        );
+        assert!(matches!(
+            remove_one(&p, &dir.join("sub"), NodeKind::File, &dir),
+            TrashOutcome::Failed { .. }
+        ));
+        assert!(dir.join("sub").is_dir());
+        assert_eq!(
+            remove_one(&p, &dir.join("f"), NodeKind::File, &dir),
+            TrashOutcome::Deleted
+        );
+        assert!(!dir.join("f").exists());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn ipc_ts_mentions_every_action_tag() {
         let ts = include_str!("../../ui/src/lib/ipc.ts");
         let mut words = vec!["ActionError".to_owned(), "message:".to_owned()];
@@ -223,6 +305,7 @@ mod tests {
             "'open_node'",
             "'get_path'",
             "'trash_nodes'",
+            "'delete_nodes'",
         ] {
             words.push(cmd.to_owned());
         }
