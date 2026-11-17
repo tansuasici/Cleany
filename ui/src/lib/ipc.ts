@@ -145,6 +145,10 @@ export type ScanEvent =
   | { event: 'done'; summary: ScanSummary }
   | { event: 'cancelled' }
   | { event: 'failed'; message: string }
+  /** After `done`: disk changes were patched into the tree. Untouched node ids stay valid. */
+  | { event: 'changed'; scan: ScanId; revision: number; root: NodeEntry }
+  /** After `done`: too much changed to patch; live updates of this scan stopped. */
+  | { event: 'outdated'; scan: ScanId }
 
 export type SortKey = 'allocated' | 'logical' | 'files' | 'name' | 'modified'
 export type SortOrder = 'asc' | 'desc'
@@ -173,8 +177,15 @@ export function startScan(
 
 export const cancelScan = (scan: ScanId) => invoke<void>('cancel_scan', { scan })
 
-/** The current scan's summary if it finished (e.g. after a webview reload), else `null`. */
-export const attachScan = () => invoke<ScanSummary | null>('attach_scan')
+/**
+ * The current scan's summary if it finished (e.g. after a webview reload), else `null`.
+ * Live updates of that scan (`changed`, `outdated`) go to `onEvent` from then on.
+ */
+export function attachScan(onEvent: (event: ScanEvent) => void): Promise<ScanSummary | null> {
+  const channel = new Channel<ScanEvent>()
+  channel.onmessage = onEvent
+  return invoke<ScanSummary | null>('attach_scan', { onEvent: channel })
+}
 
 export const getChildren = (
   scan: ScanId,

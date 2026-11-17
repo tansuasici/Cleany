@@ -9,17 +9,20 @@
 //! Every serialized type here is mirrored by hand in `ui/src/lib/ipc.ts`;
 //! the `ipc_ts_mentions_every_serialized_key` test catches drift.
 
+mod live;
+
 use std::fmt;
 use std::mem;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, mpsc};
 use std::thread;
 
 use cleany_core::{
     CancelToken, CellTarget, Node, NodeFlags, NodeId, NodeKind, Progress, ScanError, ScanOptions,
     ScanResult, SunburstOptions, Tree, TreemapOptions, scan, sunburst, treemap,
 };
+use cleany_platform::{FsChange, WatchError};
 use serde::{Deserialize, Serialize};
 
 /// Largest page [`Sessions::children`] returns, whatever `limit` asks for.
@@ -266,8 +269,10 @@ pub struct ScanSummary {
     pub issue_count: usize,
 }
 
-/// Events streamed to the UI while a scan runs. Exactly one of `Done`,
-/// `Cancelled` or `Failed` ends the stream.
+/// Events streamed to the UI for one scan. Exactly one of `Done`,
+/// `Cancelled` or `Failed` ends the scan itself. After `Done`, `Changed`
+/// may follow any number of times while the scan is current, and
+/// `Outdated` at most once, after which nothing follows.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(
     tag = "event",
@@ -297,6 +302,22 @@ pub enum ScanEvent {
     Failed {
         /// Why.
         message: String,
+    },
+    /// Changes on disk were patched into the finished tree. Node ids of
+    /// untouched entries are unchanged; removed entries are gone.
+    Changed {
+        /// The scan whose tree changed.
+        scan: ScanId,
+        /// Counts the patches of this scan, from 1.
+        revision: u32,
+        /// The root node as it is now.
+        root: NodeEntry,
+    },
+    /// Too much changed on disk (or the root itself) to patch the tree; only
+    /// a new scan shows the current state. Live updates of this scan stop.
+    Outdated {
+        /// The scan that is out of date.
+        scan: ScanId,
     },
 }
 
@@ -435,6 +456,41 @@ struct Planned {
     outcome: Option<TrashOutcome>,
 }
 
+/// Where one scan's events go. Shared between the scan thread, its live
+/// thread and [`Sessions::attach`], which points it at a new webview.
+type Sink = Arc<Mutex<Box<dyn FnMut(ScanEvent) + Send>>>;
+
+/// Keeps change notifications for a root flowing into a sender until the
+/// returned guard is dropped. `None` when the OS cannot watch the root.
+type WatchFn = Arc<dyn Fn(&Path, mpsc::Sender<FsChange>) -> Option<Box<dyn Send>> + Send + Sync>;
+
+fn new_sink<F>(emit: F) -> Sink
+where
+    F: FnMut(ScanEvent) + Send + 'static,
+{
+    Arc::new(Mutex::new(Box::new(emit)))
+}
+
+fn lock_sink(sink: &Sink) -> MutexGuard<'_, Box<dyn FnMut(ScanEvent) + Send>> {
+    // The sink only forwards events; a panic inside it leaves nothing torn.
+    sink.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// The OS watcher (FSEvents on macOS); unsupported elsewhere.
+fn os_watch(root: &Path, tx: mpsc::Sender<FsChange>) -> Option<Box<dyn Send>> {
+    match cleany_platform::watch(root, move |change| {
+        // The live thread is gone once its scan was replaced.
+        let _ = tx.send(change);
+    }) {
+        Ok(watcher) => Some(Box::new(watcher)),
+        Err(WatchError::Unsupported) => None,
+        Err(e) => {
+            eprintln!("cleany: live updates off: {e}");
+            None
+        }
+    }
+}
+
 /// A finished tree plus the children order last asked for, so that paging
 /// through one big directory sorts it once.
 struct Finished {
@@ -443,6 +499,20 @@ struct Finished {
     /// to the trash changes it); [`Sessions::attach`] rebuilds that field.
     summary: ScanSummary,
     sorted: Option<SortedChildren>,
+    /// Where `Changed` and `Outdated` go.
+    sink: Sink,
+    /// Keeps change notifications coming; `None` once live updates stopped
+    /// or when the OS cannot watch.
+    watch: Option<Box<dyn Send>>,
+    /// Options for rescanning parts of the tree, with the scan's `root_dev`.
+    options: ScanOptions,
+    /// Number of `Changed` events sent.
+    revision: u32,
+    /// Bumped by every change the app makes itself (a move to the trash), so
+    /// a disk read taken before it is not applied after it.
+    edits: u64,
+    /// Arena size right after the scan, to bound growth from patches.
+    base_len: usize,
 }
 
 struct SortedChildren {
@@ -459,6 +529,8 @@ enum State {
     Scanning {
         id: ScanId,
         cancel: CancelToken,
+        sink: Sink,
+        watch: Option<Box<dyn Send>>,
     },
     Done {
         id: ScanId,
@@ -497,10 +569,19 @@ impl State {
 /// The app's scan session: at most one scan runs, and only the latest
 /// scan's tree is kept. Starting a new scan cancels the running one and
 /// drops the previous tree.
-#[derive(Default)]
+///
+/// While a scan's tree is current, changes on disk below its root are
+/// patched into it and reported as [`ScanEvent::Changed`] (macOS only).
 pub struct Sessions {
     state: Arc<Mutex<State>>,
     next_id: AtomicU64,
+    watch: WatchFn,
+}
+
+impl Default for Sessions {
+    fn default() -> Self {
+        Self::with_watch(Arc::new(os_watch))
+    }
 }
 
 fn lock(state: &Mutex<State>) -> MutexGuard<'_, State> {
@@ -510,6 +591,14 @@ fn lock(state: &Mutex<State>) -> MutexGuard<'_, State> {
 }
 
 impl Sessions {
+    fn with_watch(watch: WatchFn) -> Self {
+        Self {
+            state: Arc::default(),
+            next_id: AtomicU64::new(0),
+            watch,
+        }
+    }
+
     /// Starts scanning `root` on a background thread and returns its id.
     /// `emit` receives [`ScanEvent`]s on that thread; the last one is
     /// `Done`, `Cancelled` or `Failed`, sent after the session state is
@@ -535,7 +624,7 @@ impl Sessions {
         root: PathBuf,
         options: ScanOptions,
         cancel: CancelToken,
-        mut emit: F,
+        emit: F,
     ) -> Result<ScanId, SessionError>
     where
         F: FnMut(ScanEvent) + Send + 'static,
@@ -544,6 +633,7 @@ impl Sessions {
             return Err(SessionError::InvalidPath);
         }
         let id = ScanId(self.next_id.fetch_add(1, Ordering::Relaxed) + 1);
+        let sink = new_sink(emit);
         let previous = {
             let mut state = lock(&self.state);
             mem::replace(
@@ -551,6 +641,8 @@ impl Sessions {
                 State::Scanning {
                     id,
                     cancel: cancel.clone(),
+                    sink: Arc::clone(&sink),
+                    watch: None,
                 },
             )
         };
@@ -559,16 +651,22 @@ impl Sessions {
         }
         // A previous tree can hold millions of nodes; free it outside the lock.
         drop(previous);
+        // Watching starts before the scan, so nothing that changes while it
+        // runs is missed; those changes wait for `Done`.
+        self.start_watch(id, &root, &sink);
 
         let shared = Arc::clone(&self.state);
         let spawned = thread::Builder::new()
             .name(format!("cleany-scan-{}", id.0))
             .spawn(move || {
                 let result = scan(&root, &options, &cancel, |p| {
-                    emit(ScanEvent::progress(p));
+                    (lock_sink(&sink))(ScanEvent::progress(p));
                 });
-                let last = finish(&shared, id, result);
-                emit(last);
+                // Held across `finish` so no live update of this scan can
+                // reach the UI before its `Done`.
+                let mut out = lock_sink(&sink);
+                let last = finish(&shared, id, options, result);
+                (out)(last);
             });
         if let Err(e) = spawned {
             let mut state = lock(&self.state);
@@ -582,6 +680,34 @@ impl Sessions {
         Ok(id)
     }
 
+    /// Starts live updates of scan `id` and keeps their guard in its
+    /// state; nothing happens when the OS cannot watch `root` or the scan
+    /// was replaced meanwhile.
+    fn start_watch(&self, id: ScanId, root: &Path, sink: &Sink) {
+        let (tx, rx) = mpsc::channel();
+        let Some(guard) = (self.watch)(root, tx) else {
+            return;
+        };
+        let spawned = live::spawn(
+            Arc::clone(&self.state),
+            id,
+            root.to_path_buf(),
+            rx,
+            Arc::clone(sink),
+        );
+        if let Err(e) = spawned {
+            eprintln!("cleany: live updates off: {e}");
+            return;
+        }
+        let mut state = lock(&self.state);
+        if let State::Scanning { id: cur, watch, .. } = &mut *state
+            && *cur == id
+        {
+            *watch = Some(guard);
+        }
+        // Otherwise the guard drops here and the live thread ends with it.
+    }
+
     /// Asks scan `id` to stop. Idempotent: cancelling a scan that already
     /// ended is a no-op.
     ///
@@ -590,7 +716,9 @@ impl Sessions {
     pub fn cancel(&self, id: ScanId) -> Result<(), SessionError> {
         let state = lock(&self.state);
         match &*state {
-            State::Scanning { id: cur, cancel } if *cur == id => {
+            State::Scanning {
+                id: cur, cancel, ..
+            } if *cur == id => {
                 cancel.cancel();
                 Ok(())
             }
@@ -792,11 +920,32 @@ impl Sessions {
     /// after a webview reload, uses it to reopen the scan instead of
     /// scanning again. `None` while a scan runs, after it was cancelled or
     /// failed, and before any scan.
-    pub fn attach(&self) -> Option<ScanSummary> {
+    ///
+    /// Live updates of the scan go to `emit` from then on, instead of to
+    /// the stream the scan was started with.
+    pub fn attach<F>(&self, emit: F) -> Option<ScanSummary>
+    where
+        F: FnMut(ScanEvent) + Send + 'static,
+    {
+        let sink = {
+            let state = lock(&self.state);
+            let State::Done { scan, .. } = &*state else {
+                return None;
+            };
+            Arc::clone(&scan.sink)
+        };
+        // Held while the summary is read, so every update sent after it is
+        // newer than the summary and goes to `emit`.
+        let mut out = lock_sink(&sink);
+        *out = Box::new(emit);
         let state = lock(&self.state);
         let State::Done { scan, .. } = &*state else {
             return None;
         };
+        if !Arc::ptr_eq(&scan.sink, &sink) {
+            // A newer scan finished meanwhile; its own stream reports it.
+            return None;
+        }
         let root = entry(&scan.tree, scan.tree.root())?;
         Some(ScanSummary {
             root,
@@ -912,6 +1061,7 @@ impl Sessions {
         }
         if let Some(f) = finished {
             f.sorted = None;
+            f.edits += 1;
             report.root = entry(&f.tree, f.tree.root());
         }
         Ok((report, deletions))
@@ -980,21 +1130,41 @@ fn holds_placeholder(tree: &Tree, id: NodeId) -> bool {
 
 /// Records the outcome of scan `id` and returns the event that ends its
 /// stream. A scan that was replaced meanwhile leaves the state alone.
-fn finish(state: &Mutex<State>, id: ScanId, result: Result<ScanResult, ScanError>) -> ScanEvent {
+fn finish(
+    state: &Mutex<State>,
+    id: ScanId,
+    options: ScanOptions,
+    result: Result<ScanResult, ScanError>,
+) -> ScanEvent {
     let mut state = lock(state);
-    let current = matches!(&*state, State::Scanning { id: cur, .. } if *cur == id);
-    if !current {
-        return ScanEvent::Cancelled;
-    }
+    let (sink, watch) = match &mut *state {
+        State::Scanning {
+            id: cur,
+            sink,
+            watch,
+            ..
+        } if *cur == id => (Arc::clone(sink), watch.take()),
+        _ => return ScanEvent::Cancelled,
+    };
     match result {
         Ok(r) => match summary(id, &r) {
             Some(summary) => {
+                let base_len = r.tree.len();
                 *state = State::Done {
                     id,
                     scan: Box::new(Finished {
                         tree: r.tree,
                         summary: summary.clone(),
                         sorted: None,
+                        sink,
+                        watch,
+                        options: ScanOptions {
+                            root_dev: Some(r.root_dev),
+                            ..options
+                        },
+                        revision: 0,
+                        edits: 0,
+                        base_len,
                     }),
                 };
                 ScanEvent::Done { summary }
@@ -1122,7 +1292,7 @@ mod tests {
         CancelToken, ChildrenPage, Deletion, EntryKind, Finished, Freed, MAX_SUNBURST_DEPTH,
         MAX_TREEMAP_DEPTH, NodeEntry, RingArc, ScanEvent, ScanId, ScanIssue, ScanStats,
         ScanSummary, SessionError, Sessions, SortKey, SortOrder, State, SunburstSlice, TrashItem,
-        TrashOutcome, TrashReport, TreemapCell, TreemapSlice, entry, lock,
+        TrashOutcome, TrashReport, TreemapCell, TreemapSlice, entry, lock, new_sink,
     };
     use cleany_core::{EntryInfo, NodeFlags, NodeKind, ScanOptions, Size, Tree, TreeBuilder};
     use std::ffi::OsStr;
@@ -1183,10 +1353,17 @@ mod tests {
             }],
             issue_count: 1,
         };
+        let base_len = tree.len();
         Box::new(Finished {
             tree,
             summary,
             sorted: None,
+            sink: new_sink(|_| {}),
+            watch: None,
+            options: ScanOptions::default(),
+            revision: 0,
+            edits: 0,
+            base_len,
         })
     }
 
@@ -1433,6 +1610,8 @@ mod tests {
         *lock(&s.state) = State::Scanning {
             id,
             cancel: token.clone(),
+            sink: new_sink(|_| {}),
+            watch: None,
         };
         let err = s.children(id, 0, SortKey::Name, SortOrder::Asc, 0, 10);
         assert_eq!(err, Err(SessionError::NotReady));
@@ -1580,7 +1759,7 @@ mod tests {
     #[test]
     fn attach_returns_the_finished_scan() {
         let (s, id) = done(small_tree());
-        let summary = s.attach().unwrap();
+        let summary = s.attach(|_| {}).unwrap();
         assert_eq!(summary.scan, id);
         assert_eq!(summary.root.id, 0);
         assert_eq!((summary.root.allocated, summary.root.files), (600, 3));
@@ -1596,23 +1775,25 @@ mod tests {
         let mut calls = Vec::new();
         s.trash(id, &[c], fake(&mut calls, TrashOutcome::Trashed))
             .unwrap();
-        let root = s.attach().unwrap().root;
+        let root = s.attach(|_| {}).unwrap().root;
         assert_eq!((root.allocated, root.files), (400, 2));
     }
 
     #[test]
     fn attach_is_none_without_a_finished_scan() {
         let s = Sessions::default();
-        assert_eq!(s.attach(), None);
+        assert_eq!(s.attach(|_| {}), None);
         *lock(&s.state) = State::Scanning {
             id: ScanId(3),
             cancel: CancelToken::new(),
+            sink: new_sink(|_| {}),
+            watch: None,
         };
-        assert_eq!(s.attach(), None);
+        assert_eq!(s.attach(|_| {}), None);
         *lock(&s.state) = State::Cancelled { id: ScanId(3) };
-        assert_eq!(s.attach(), None);
+        assert_eq!(s.attach(|_| {}), None);
         *lock(&s.state) = State::Failed { id: ScanId(3) };
-        assert_eq!(s.attach(), None);
+        assert_eq!(s.attach(|_| {}), None);
     }
 
     #[test]
@@ -1879,6 +2060,12 @@ mod tests {
             ScanEvent::Failed {
                 message: "m".to_owned(),
             },
+            ScanEvent::Changed {
+                scan: ScanId(1),
+                revision: 2,
+                root: sample_entry(),
+            },
+            ScanEvent::Outdated { scan: ScanId(1) },
         ];
         let errors = [
             SessionError::StaleScan,
@@ -1991,6 +2178,22 @@ mod tests {
         assert_eq!(
             v,
             serde_json::json!({"event": "progress", "dirs": 1, "files": 2, "allocated": 3, "elapsedMs": 4})
+        );
+        let v = serde_json::to_value(ScanEvent::Outdated { scan: ScanId(3) }).unwrap();
+        assert_eq!(v, serde_json::json!({"event": "outdated", "scan": 3}));
+        let v = serde_json::to_value(ScanEvent::Changed {
+            scan: ScanId(3),
+            revision: 1,
+            root: sample_entry(),
+        })
+        .unwrap();
+        assert_eq!(
+            (&v["event"], &v["scan"], &v["revision"]),
+            (
+                &serde_json::json!("changed"),
+                &serde_json::json!(3),
+                &serde_json::json!(1)
+            )
         );
         let e = serde_json::to_value(sample_entry()).unwrap();
         assert_eq!(e["hasChildren"], true);

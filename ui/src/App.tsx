@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { LocaleMenu } from './components/LocaleMenu'
-import { AppIcon, ChevronIcon } from './components/ui'
+import { AppIcon, Button, ChevronIcon } from './components/ui'
 import type { NodeEntry } from './lib/ipc'
 import { BrowseView } from './screens/Browse'
 import { EndedScreen } from './screens/Ended'
@@ -61,6 +61,8 @@ export default function App() {
         </div>
       </header>
 
+      <Outdated screen={screen} />
+
       <main className="min-h-0 flex-1 overflow-auto [scrollbar-gutter:stable]">
         {screen.kind === 'volumes' && <VolumesScreen />}
         {screen.kind === 'scanning' && <ScanningScreen screen={screen} />}
@@ -68,6 +70,23 @@ export default function App() {
         {screen.kind === 'browse' && <BrowseView screen={screen} />}
         {(screen.kind === 'cancelled' || screen.kind === 'failed') && <EndedScreen screen={screen} />}
       </main>
+    </div>
+  )
+}
+
+/** Shown once live updates gave up on the finished scan on show: too much changed on disk. */
+function Outdated({ screen }: { screen: Screen }) {
+  const { t } = useT()
+  const scan = useStore((s) => s.scan)
+  const done = screen.kind === 'done' ? screen : screen.kind === 'browse' ? screen.done : null
+  if (!done?.outdated) return null
+  return (
+    <div
+      role="status"
+      className="flex shrink-0 items-center gap-3 border-b border-hairline bg-raised px-4 py-2 max-sm:px-3"
+    >
+      <p className="min-w-0 flex-1 text-secondary text-ink-2">{t('live.outdated')}</p>
+      <Button onClick={() => void scan(done.target)}>{t('retry')}</Button>
     </div>
   )
 }

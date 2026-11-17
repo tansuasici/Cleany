@@ -239,7 +239,50 @@ Give the task you are actively working on an `h3` heading under **In Progress** 
      - `notify` 9.0.0-rc ikisini de düzeltiyor. Seçenek: 8.2.2'de kal ya da 9 rc'ye geç.
    - Ölçüldü: kök `/System/Volumes/Data` yazılırsa hiç olay gelmez (bu birim seçicide gizli).
    - Açık: Tam Disk Erişimi olmadan korumalı klasörlerden olay gelip gelmediği `tauri dev` altında ölçülemez (izin Terminal'e ait); paketli uygulamayla PR 4'te bakılacak.
-4. **Session + `ScanEvent::Changed` + UI tepkisi.**
+4. **Session + `ScanEvent::Changed` + UI tepkisi.** — PLAN, onay bekliyor (`feat/live-session`).
+   - **İzleyici ne zaman başlar:** tarama başlarken, `scan()` çağrısından önce. Tarama sırasında gelen değişiklikler birleştiricide birikir ve `Done` sonrasında uygulanır. Böylece uzun bir taramada erken taranan klasörlerdeki değişiklikler kaçmaz.
+   - **Canlı iş parçacığı (`cleany-live-N`):** taramayla aynı ömürde.
+     - Kanaldan `FsChange` alır ve `Coalescer`'a iter. `ready` olunca planı alır.
+     - Her klasör için sırayla `request` (kilit altında), `read` (kilitsiz) ve `apply` (kilit altında, tarama hâlâ güncelse).
+     - Durum `Done` değilse (tarama sürüyor) bekler. Tarama değiştirilmiş ya da iptal edilmişse çıkar.
+   - **Yaşam süresi:** `Watcher` taramanın durumunda tutulur. Yeni tarama ya da iptal durumu değiştirince `Watcher` düşer, kanal kapanır ve iş parçacığı biter.
+   - **Test için enjeksiyon:** `Sessions` bir izleme fabrikası alır. Varsayılanı `cleany_platform::watch`; testler sahte bir kaynak verir, gerçek FSEvents gerekmez ve 3 OS'ta deterministiktir. macOS dışında `Unsupported` döner; tarama bugünkü gibi anlık görüntü kalır.
+   - **Uygulamanın kendi çöpe taşıması (bayat okuma):** `Finished` içinde bir `edits` sayacı tutulur ve `trash` bunu artırır. `apply` öncesinde sayaç `request` anındakinden farklıysa güncelleme uygulanmaz; klasör birleştiriciye geri konur ve sonraki turda yeniden okunur. Böylece çöpe taşınan öğe ekranda bir anlığına geri gelmez.
+   - **Ağaçta olmayan yol:** `request` `None` dönerse ve yol bir klasörse, bilinen ilk ataya çıkılır ve o ata sığ yenilenir (yeni klasörler aşılanır).
+   - **Tam yeniden tarama gereken durumlar:** `RefreshPlan::Full`, `Outcome::RootGone` ya da ölü düğüm sayısının canlıyı geçmesi. Bu durumlarda arka planda kendiliğinden yeniden taranmaz; yeni bir `ScanEvent::Outdated` olayı gönderilir ve izleme durur. Gerekçe: `/` taramasını sessizce yeniden başlatmak pahalıdır ve kullanıcı o sırada tabloda olabilir.
+   - **Kanal:** `start_scan`'ın kanalı `Done` sonrasında da tutulur; ilk canlı olaylar bu kanaldan gider. `attach_scan(onEvent)` yeni bir kanal alır ve eskisinin yerine geçer (webview yenilendiğinde). Böylece `done` ile ilk bağlanma arasında olay kaybolmaz.
+   - **Olaylar (IPC, onay gerekir):**
+     - `{ event: "changed", revision, root }`: her uygulanan turda bir kez gönderilir (en çok 1 Hz civarı; birleştirme penceresi 1–5 sn). Ağaçta değişiklik yoksa gönderilmez.
+     - `{ event: "outdated" }`: sonuçlar artık güvenilir değil, yeniden tarama gerekiyor.
+     - Plandaki `dirs` ve `truncated` alanları çıkarıldı. Tablo, harita ya da halka bir klasörün tüm alt ağacının boyutunu gösterdiği için, derindeki her değişiklik açık görünümü etkiler. UI her `changed` olayında açık görünümü bir kez yeniden çeker; liste kullanılmayacağı için gönderilmez.
+   - **UI tepkisi:**
+     - `store.ts`: `changed` gelince `last.summary.root` güncellenir, döküm (`top`) yeniden yüklenir, sepet `refreshBasket` ile güncellenir ve `revision` artırılır.
+     - Tablo, harita, halka ve döküm klasörleri `revision` değişince açık düğümü yeniden çeker. Bu sırada eski veri ekranda kalır; boş durum ya da yükleme göstergesi çıkmaz.
+     - Açık klasör silindiyse (`unknownNode`), iz üzerindeki ilk yaşayan ataya çıkılır ve durum satırında "Açık klasör diskten kaldırıldı" bildirilir.
+     - Seçili öğe kaybolduysa seçim kalkar.
+     - `outdated` gelince döküm ve tablonun üstünde bir not gösterilir: "Tarama sonrasında diskte çok sayıda değişiklik oldu. Güncel sonuç için yeniden tarayın." ve "Yeniden tara" düğmesi. Eski sonuç görünür kalır.
+     - Metinler TR ve EN olarak `i18n.ts` dosyasına eklenir (resmî ton).
+   - **Kapsam dışı:** pencere gizliyken izlemeyi duraklatmak, aç/kapa ayarı, ağacı sıkıştırma.
+   - **Testler:**
+     - `session::changes_patch_done_tree_and_emit_changed`
+     - `session::changes_buffered_during_scan_apply_after_done`
+     - `session::changes_for_a_replaced_scan_are_dropped`
+     - `session::trash_during_refresh_is_not_undone`
+     - `session::unknown_dir_refreshes_first_known_ancestor`
+     - `session::root_gone_emits_outdated_and_stops`
+     - `session::attach_replaces_the_event_channel`
+     - JSON şekli ve `ipc.ts` anahtar testleri `changed` ve `outdated` örnekleriyle genişler.
+     - Testlerde birleştiricinin 1 sn'lik sessiz penceresi beklenir; birkaç test birkaç saniye sürer.
+   - **Dosyalar:**
+     - `src-tauri/src/session.rs` (canlı döngü ayrı bir `src-tauri/src/live.rs` modülüne çıkabilir)
+     - `src-tauri/src/lib.rs`
+     - `ui/src/lib/ipc.ts`, `ui/src/store.ts`, `ui/src/lib/i18n.ts`
+     - `ui/src/screens/{Browse,Treemap,Sunburst,Summary}.tsx`
+     - `CODEBASE_MAP.md`, `tasks/decisions.md`
+   - **Doğrulama:**
+     - 5 cargo adımı ve UI typecheck/build.
+     - `tauri dev` ile canlı deneme: bir klasör taranır, Terminal'den dosya eklenip silinir, toplam ve tablo 1–5 sn içinde güncellenir.
+     - FDA sorusu için paketli uygulama (`tauri build`) ile korumalı bir klasörde deneme.
 5. **ADR-0006** ("Canlı izleme: FSEvents, sığ yenileme, kimlik koruma, önbellek yok"), PR 2 ile birlikte `tasks/decisions.md` dosyasına. — EKLENDİ.
 
 #### Onay gereken değişiklikler
@@ -1047,3 +1090,5 @@ Parked scope — deferred work, revisit when prioritized. (CLAUDE.md → Scope D
 - **Taramanın disk önbelleği** (2026-11-16, canlı tarama planından ertelendi): yalnız süreç yeniden başlamasını çözer; doğru olması için FSEvents `sinceWhen` geriye oynatması gerekir. v1.x "Anlık görüntü ve fark" ile birlikte ele alınmalı. Linux (`inotify` izleme sınırı) ve Windows canlı izleme de ayrı iş.
 - **Silme logunu uygulamadan göster** (#32'den ertelendi): "Logu göster" düğmesi `deletions.jsonl` dosyasını dosya yöneticisinde açabilir; yeni IPC komutu gerektirdiği için #32 kapsamı dışında bırakıldı.
 - **Döküm "Aç →" dokunmatikte görünmüyor** (#28 interface-check, Minor): `ui/src/screens/Summary.tsx:309` yalnızca hover/odakta görünür; Tailwind v4 `group-hover` `(hover: hover)` ile kapılı olduğundan dokunmatik ekranda tıklanabilir ama görünmez. Masaüstü uygulamasında pratik etkisi yok; dokunmatik/Linux tablet desteği gündeme gelirse `@media (hover: none)` altında sürekli göster.
+- **Canlı güncelleme firmlink kopyasına ulaşmıyor** (2026-11-17, PR 4 smoke testi; bilinen sınırlama): FSEvents yolları `/Users/...` olarak bildiriyor. `/` taramasında değişiklik Tümü › Users düğümüne işleniyor; aynı verinin System › Volumes › Data › Users kopyası eski kalıyor. Kök neden yukarıdaki çift sayım hatasıyla aynı (Data birimi iki yoldan yürünüyor); o düzeltilince (kök `/` iken `/System/Volumes/Data` atlanınca) bu da kapanır. Ayrı iş.
+- **"Güncel değil" çubuğu tek metin kullanıyor** (2026-11-17, PR 4 smoke testi, Minor): taranan birim çıkarıldığında da "Tarama sonrasında diskte çok sayıda değişiklik yapıldı" yazıyor. "Yeniden tara" var olan hata ekranına düşüyor ("cannot read scan root"), işlev doğru. Nedene göre metin (kök kayboldu / çok değişiklik) için `outdated` olayına neden alanı eklenmeli; IPC değişikliği olduğundan ayrı iş.

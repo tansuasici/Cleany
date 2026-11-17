@@ -63,6 +63,7 @@ const rad = (turn: number) => turn * TAU - Math.PI / 2
 export function Sunburst({
   scan,
   node,
+  revision,
   name,
   label,
   canGoUp,
@@ -74,6 +75,8 @@ export function Sunburst({
 }: {
   scan: ScanId
   node: NodeEntry
+  /** The tree's revision; a newer one reads the rings again, the old ones drawing meanwhile. */
+  revision: number
   /** The folder's display name, written in the centre. */
   name: string
   label: string
@@ -96,7 +99,7 @@ export function Sunburst({
   const [selected, setSelected] = useState<{ node: number; i: number } | null>(null)
 
   // Angles don't depend on the box, so a resize only redraws.
-  const key = `${scan}:${node.id}`
+  const key = `${scan}:${node.id}:${revision}`
 
   useEffect(() => {
     if (got?.key === key) return
@@ -316,14 +319,14 @@ export function Sunburst({
       // `NodeEntry` (which `browse` needs) comes with it.
       getSunburst(scan, id, DEPTH, MIN_ANGLE).then(
         (next) => {
-          setGot({ key: `${scan}:${id}`, node: id, result: next })
+          setGot({ key: `${scan}:${id}:${revision}`, node: id, result: next })
           setHover(null)
           onOpen(next.node)
         },
-        () => setGot({ key: `${scan}:${node.id}`, node: node.id, result: 'error' }),
+        () => setGot({ key: `${scan}:${node.id}:${revision}`, node: node.id, result: 'error' }),
       )
     },
-    [scan, node.id, onOpen],
+    [scan, node.id, revision, onOpen],
   )
 
   const onPointerMove = (e: MouseEvent<HTMLDivElement>) => {

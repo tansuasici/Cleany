@@ -42,7 +42,8 @@ const NO_CELLS: TreemapCell[] = []
 /** The last slice asked for; `node` lets a stale size keep drawing while a new one loads. */
 type Got = { key: string; node: number; result: TreemapSlice | 'error' }
 
-const keyOf = (scan: ScanId, node: number, box: Box) => `${scan}:${node}:${box.w}x${box.h}`
+const keyOf = (scan: ScanId, node: number, box: Box, revision: number) =>
+  `${scan}:${node}:${box.w}x${box.h}:${revision}`
 
 const opens = (c: TreemapCell | undefined): c is TreemapCell & { id: number } =>
   c !== undefined && c.id !== null && c.kind === 'dir' && c.hasChildren
@@ -90,6 +91,7 @@ function nearest(top: TreemapCell[], from: number, dir: Dir): number {
 export function Treemap({
   scan,
   node,
+  revision,
   label,
   cameFrom,
   onOpen,
@@ -99,6 +101,8 @@ export function Treemap({
 }: {
   scan: ScanId
   node: NodeEntry
+  /** The tree's revision; a newer one reads the map again, the old one drawing meanwhile. */
+  revision: number
   label: string
   cameFrom: number | null
   onOpen: (node: NodeEntry) => void
@@ -117,7 +121,7 @@ export function Treemap({
   const [hover, setHover] = useState<{ cell: number; x: number; y: number } | null>(null)
   const [selected, setSelected] = useState<{ node: number; i: number } | null>(null)
 
-  const key = box && box.w > 0 && box.h > 0 ? keyOf(scan, node.id, box) : null
+  const key = box && box.w > 0 && box.h > 0 ? keyOf(scan, node.id, box, revision) : null
 
   useEffect(() => {
     if (!key || !box || got?.key === key) return
@@ -245,14 +249,14 @@ export function Treemap({
       // `NodeEntry` (which `browse` needs) comes with it.
       getTreemap(scan, id, box.w, box.h, DEPTH, MIN_AREA).then(
         (next) => {
-          setGot({ key: keyOf(scan, id, box), node: id, result: next })
+          setGot({ key: keyOf(scan, id, box, revision), node: id, result: next })
           setHover(null)
           onOpen(next.node)
         },
-        () => setGot({ key: keyOf(scan, node.id, box), node: node.id, result: 'error' }),
+        () => setGot({ key: keyOf(scan, node.id, box, revision), node: node.id, result: 'error' }),
       )
     },
-    [box, scan, node.id, onOpen],
+    [box, scan, node.id, revision, onOpen],
   )
 
   const onPointerMove = (e: MouseEvent<HTMLDivElement>) => {
