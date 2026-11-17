@@ -7,14 +7,17 @@
 use std::fmt;
 use std::fs::{self, File};
 use std::io::{self, BufWriter, Write};
-use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, PoisonError};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::session::{
-    EntryKind, ExportHead, ExportRow, ExportScope, ExportSink, ScanId, SessionError, Sessions,
+    EntryKind, ExportHead, ExportProgress, ExportRow, ExportScope, ExportSink, ScanId,
+    SessionError, Sessions,
 };
 
 /// Column names, in order. CSV writes them as its header; JSON items use the
@@ -82,6 +85,8 @@ pub enum ExportError {
         /// The OS error, for the log; the UI shows its own text.
         message: String,
     },
+    /// The user stopped the export; the partial file was removed.
+    Cancelled,
     /// The save dialog failed.
     Dialog {
         /// What went wrong.
@@ -96,6 +101,7 @@ impl fmt::Display for ExportError {
             Self::NotReady => f.write_str("scan has no results"),
             Self::UnknownNode => f.write_str("unknown node"),
             Self::Io { message } => write!(f, "cannot write the file: {message}"),
+            Self::Cancelled => f.write_str("export stopped"),
             Self::Dialog { message } => write!(f, "save dialog failed: {message}"),
         }
     }
@@ -137,13 +143,97 @@ pub struct ExportReport {
     pub file_name: String,
 }
 
+/// What a running export tells the UI. Mirrors `ExportEvent` in
+/// `ui/src/lib/ipc.ts`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum ExportEvent {
+    /// The file was chosen and writing starts.
+    Started {
+        /// The file's name, without its folder.
+        file_name: String,
+    },
+    /// Rows written so far.
+    Progress {
+        /// Rows written.
+        rows: u64,
+        /// Rows expected, when known; an upper bound.
+        total: Option<u64>,
+    },
+}
+
+/// Least time between two [`ExportEvent::Progress`] events.
+pub const PROGRESS_EVERY: Duration = Duration::from_millis(150);
+
+/// The running export's stop request and the last finished file. One
+/// export runs at a time; the UI starts the next only after the last one
+/// ended.
+#[derive(Debug, Default)]
+pub struct Exports {
+    cancel: AtomicBool,
+    last: Mutex<Option<PathBuf>>,
+}
+
+impl Exports {
+    /// Clears an old stop request before a new export starts.
+    pub fn begin(&self) {
+        self.cancel.store(false, Ordering::Relaxed);
+    }
+
+    /// Asks the running export to stop at its next batch.
+    pub fn cancel(&self) {
+        self.cancel.store(true, Ordering::Relaxed);
+    }
+
+    /// Remembers `path` as the last finished export, for [`Self::last`].
+    pub fn finished(&self, path: PathBuf) {
+        *self.last.lock().unwrap_or_else(PoisonError::into_inner) = Some(path);
+    }
+
+    /// The file the last successful export wrote, if any. Kept here so the
+    /// UI can ask to show it without sending a path.
+    pub fn last(&self) -> Option<PathBuf> {
+        self.last
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Reports progress through `send`, at most every [`PROGRESS_EVERY`]
+    /// (the first report always goes out), and fails with
+    /// [`ExportError::Cancelled`] once a stop was asked for.
+    pub fn reporter<'a>(
+        &'a self,
+        mut send: impl FnMut(ExportProgress) + 'a,
+    ) -> impl FnMut(ExportProgress) -> Result<(), ExportError> + 'a {
+        let mut last: Option<Instant> = None;
+        move |p| {
+            if self.cancel.load(Ordering::Relaxed) {
+                return Err(ExportError::Cancelled);
+            }
+            if last.is_none_or(|t| t.elapsed() >= PROGRESS_EVERY) {
+                last = Some(Instant::now());
+                send(p);
+            }
+            Ok(())
+        }
+    }
+}
+
 /// Writes `scope` of scan `id` to `path` as `format`. The rows go to a
 /// hidden file next to `path` first, renamed over `path` only once complete,
-/// so a failed export leaves an existing file at `path` as it was.
+/// so a failed or stopped export leaves an existing file at `path` as it
+/// was and no partial file behind. `progress` is passed to
+/// [`Sessions::export`].
 ///
 /// # Errors
-/// The session's errors for a stale scan or unknown node, or
-/// [`ExportError::Io`] when the file cannot be written.
+/// The session's errors for a stale scan or unknown node,
+/// [`ExportError::Io`] when the file cannot be written, or whatever
+/// `progress` failed with.
 pub fn write_file(
     sessions: &Sessions,
     id: ScanId,
@@ -151,13 +241,14 @@ pub fn write_file(
     format: Format,
     path: &Path,
     now: SystemTime,
+    progress: impl FnMut(ExportProgress) -> Result<(), ExportError>,
 ) -> Result<ExportReport, ExportError> {
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned());
     let name = name.ok_or_else(|| ExportError::Io {
         message: "the chosen path has no file name".to_owned(),
     })?;
     let part = path.with_file_name(format!(".{name}.cleany-part"));
-    let result = write_to(sessions, id, scope, format, &part, now)
+    let result = write_to(sessions, id, scope, format, &part, now, progress)
         .and_then(|rows| Ok((rows, fs::rename(&part, path)?)));
     match result {
         Ok((rows, ())) => Ok(ExportReport {
@@ -180,17 +271,18 @@ fn write_to(
     format: Format,
     path: &Path,
     now: SystemTime,
+    progress: impl FnMut(ExportProgress) -> Result<(), ExportError>,
 ) -> Result<u64, ExportError> {
     let file = BufWriter::new(File::create(path)?);
     let (rows, file) = match format {
         Format::Csv => {
             let mut sink = CsvSink::new(file);
-            let rows = sessions.export(id, scope, &mut sink)?;
+            let rows = sessions.export(id, scope, &mut sink, progress)?;
             (rows, sink.finish()?)
         }
         Format::Json => {
             let mut sink = JsonSink::new(file, scope, unix_secs(now));
-            let rows = sessions.export(id, scope, &mut sink)?;
+            let rows = sessions.export(id, scope, &mut sink, progress)?;
             (rows, sink.finish(rows)?)
         }
     };
@@ -426,11 +518,11 @@ impl<W: Write> ExportSink for JsonSink<W> {
 #[cfg(test)]
 mod tests {
     use super::{
-        COLUMNS, CsvSink, ExportError, Format, JsonSink, default_name, iso_utc, write_file,
+        COLUMNS, CsvSink, ExportError, Exports, Format, JsonSink, default_name, iso_utc, write_file,
     };
     use crate::session::{
-        EntryKind, ExportHead, ExportRow, ExportScope, ExportSink, NodeEntry, ScanId, Sessions,
-        SortKey, SortOrder,
+        EntryKind, ExportHead, ExportProgress, ExportRow, ExportScope, ExportSink, NodeEntry,
+        ScanId, Sessions, SortKey, SortOrder,
     };
     use std::path::PathBuf;
     use std::time::{Duration, UNIX_EPOCH};
@@ -562,6 +654,7 @@ mod tests {
             Format::Csv,
             &path,
             UNIX_EPOCH,
+            |_| Ok(()),
         );
         assert_eq!(err, Err(ExportError::StaleScan));
         assert!(!path.exists());
@@ -573,12 +666,38 @@ mod tests {
             Format::Json,
             &path,
             UNIX_EPOCH,
+            |_| Ok(()),
         );
         assert_eq!(err, Err(ExportError::StaleScan));
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "keep");
         assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
         std::fs::remove_file(&path).unwrap();
         std::fs::remove_dir(&dir).unwrap();
+    }
+
+    #[test]
+    fn reporter_throttles_and_stops_on_cancel() {
+        let exports = Exports::default();
+        let mut sent = Vec::new();
+        {
+            let mut report = exports.reporter(|p| sent.push(p.rows));
+            let at = |rows| ExportProgress { rows, total: None };
+            assert_eq!(report(at(0)), Ok(()));
+            // Too soon after the first report: counted, not sent.
+            assert_eq!(report(at(1)), Ok(()));
+            exports.cancel();
+            assert_eq!(report(at(2)), Err(ExportError::Cancelled));
+        }
+        assert_eq!(sent, [0]);
+        exports.begin();
+        let mut report = exports.reporter(|_| {});
+        assert_eq!(
+            report(ExportProgress {
+                rows: 0,
+                total: None
+            }),
+            Ok(())
+        );
     }
 
     #[test]

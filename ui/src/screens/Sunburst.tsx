@@ -402,7 +402,7 @@ export function Sunburst({
       aria-label={label}
       aria-activedescendant={chosen ? `ring-arc-${active}` : undefined}
       onKeyDown={onKeyDown}
-      className="mt-4 flex min-h-0 flex-1 flex-col rounded-panel border border-card-edge bg-card shadow-card focus-visible:border-accent focus-visible:outline-none"
+      className="mt-4 flex min-h-0 flex-1 flex-col rounded-panel border border-card-edge bg-card shadow-card focus-visible:outline-none"
     >
       <div
         ref={stage}
