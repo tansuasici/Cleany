@@ -20,7 +20,8 @@ use std::thread;
 
 use cleany_core::{
     CancelToken, CellTarget, Node, NodeFlags, NodeId, NodeKind, Progress, ScanError, ScanOptions,
-    ScanResult, SunburstOptions, Tree, TreemapOptions, scan, sunburst, treemap,
+    ScanResult, SunburstOptions, Tree, TreemapOptions, largest_dirs, largest_files, scan, sunburst,
+    treemap,
 };
 use cleany_platform::{FsChange, WatchError};
 use serde::{Deserialize, Serialize};
@@ -126,6 +127,30 @@ pub struct NodeEntry {
     pub hardlink: bool,
     /// A cloud placeholder whose data is not stored locally.
     pub placeholder: bool,
+}
+
+/// What [`Sessions::largest`] ranks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum LargestKind {
+    /// Regular files, by their own allocated bytes.
+    Files,
+    /// Folders, by the allocated bytes of their direct non-folder children.
+    Dirs,
+}
+
+/// One row of [`Sessions::largest`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LargestEntry {
+    /// The node itself; for a folder, `allocated` is its subtree total.
+    pub entry: NodeEntry,
+    /// The bytes it was ranked by: its own for a file, its direct
+    /// non-folder children's for a folder.
+    pub own: u64,
+    /// The folder holding it, relative to the scope and `/`-joined; empty
+    /// for the scope itself and its direct children.
+    pub dir: String,
 }
 
 /// One page of a node's sorted children.
@@ -987,6 +1012,45 @@ impl Sessions {
         tree.path(node).ok_or(SessionError::UnknownNode)
     }
 
+    /// The `limit` largest files or folders anywhere below `node` (`node`
+    /// included), largest first. At most [`MAX_PAGE`] rows are returned.
+    ///
+    /// # Errors
+    /// [`SessionError::StaleScan`], [`SessionError::NotReady`] or
+    /// [`SessionError::UnknownNode`].
+    pub fn largest(
+        &self,
+        id: ScanId,
+        node: u32,
+        kind: LargestKind,
+        limit: u32,
+    ) -> Result<Vec<LargestEntry>, SessionError> {
+        let mut state = lock(&self.state);
+        let tree = &state.finished_mut(id)?.tree;
+        let scope = tree.node_id(node).ok_or(SessionError::UnknownNode)?;
+        let limit = limit.min(MAX_PAGE) as usize;
+        let ranked: Vec<(NodeId, u64)> = match kind {
+            LargestKind::Files => largest_files(tree, scope, limit)
+                .into_iter()
+                .map(|n| (n, tree.node(n).map_or(0, |n| n.size().allocated)))
+                .collect(),
+            LargestKind::Dirs => largest_dirs(tree, scope, limit)
+                .into_iter()
+                .map(|(n, own)| (n, own.allocated))
+                .collect(),
+        };
+        Ok(ranked
+            .into_iter()
+            .filter_map(|(n, own)| {
+                Some(LargestEntry {
+                    entry: entry(tree, n)?,
+                    own,
+                    dir: relative_dir(tree, scope, n),
+                })
+            })
+            .collect())
+    }
+
     /// Moves `nodes` to the trash with `mover` and takes them out of the
     /// tree. Duplicates and nodes below another requested node are dropped.
     /// The root and anything holding a cloud placeholder come back
@@ -1221,6 +1285,22 @@ fn summary(id: ScanId, r: &ScanResult) -> Option<ScanSummary> {
     })
 }
 
+/// The folder holding `node`, relative to `scope` and `/`-joined: empty when
+/// `node` is `scope` or one of its direct children.
+fn relative_dir(tree: &Tree, scope: NodeId, node: NodeId) -> String {
+    let mut names = Vec::new();
+    let mut cur = tree.node(node).and_then(Node::parent);
+    while let Some(c) = cur {
+        if c == scope || node == scope {
+            break;
+        }
+        names.extend(tree.name(c).map(|n| n.to_string_lossy().into_owned()));
+        cur = tree.node(c).and_then(Node::parent);
+    }
+    names.reverse();
+    names.join("/")
+}
+
 fn entry(tree: &Tree, id: NodeId) -> Option<NodeEntry> {
     let n = tree.node(id)?;
     Some(NodeEntry {
@@ -1293,10 +1373,10 @@ fn millis(d: std::time::Duration) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        CancelToken, ChildrenPage, Deletion, EntryKind, Finished, Freed, MAX_SUNBURST_DEPTH,
-        MAX_TREEMAP_DEPTH, NodeEntry, RingArc, ScanEvent, ScanId, ScanIssue, ScanStats,
-        ScanSummary, SessionError, Sessions, SortKey, SortOrder, State, SunburstSlice, TrashItem,
-        TrashOutcome, TrashReport, TreemapCell, TreemapSlice, entry, lock, new_sink,
+        CancelToken, ChildrenPage, Deletion, EntryKind, Finished, Freed, LargestKind,
+        MAX_SUNBURST_DEPTH, MAX_TREEMAP_DEPTH, NodeEntry, RingArc, ScanEvent, ScanId, ScanIssue,
+        ScanStats, ScanSummary, SessionError, Sessions, SortKey, SortOrder, State, SunburstSlice,
+        TrashItem, TrashOutcome, TrashReport, TreemapCell, TreemapSlice, entry, lock, new_sink,
     };
     use cleany_core::{EntryInfo, NodeFlags, NodeKind, ScanOptions, Size, Tree, TreeBuilder};
     use std::ffi::OsStr;
@@ -1497,6 +1577,46 @@ mod tests {
             .id;
         assert_eq!(s.path(id, 0), Ok(PathBuf::from("/r")));
         assert_eq!(s.path(id, x), Ok(PathBuf::from("/r/C/x")));
+    }
+
+    #[test]
+    fn largest_unknown_node_is_an_error() {
+        let (s, id) = done(small_tree());
+        let err = s.largest(id, u32::MAX, LargestKind::Files, 10);
+        assert_eq!(err, Err(SessionError::UnknownNode));
+        let err = s.largest(ScanId(8), 0, LargestKind::Dirs, 10);
+        assert_eq!(err, Err(SessionError::StaleScan));
+    }
+
+    #[test]
+    fn largest_dir_is_relative_to_scope() {
+        let (s, id) = done(small_tree());
+        let files = s.largest(id, 0, LargestKind::Files, 10).unwrap();
+        let rows: Vec<(&str, u64, &str)> = files
+            .iter()
+            .map(|r| (r.entry.name.as_str(), r.own, r.dir.as_str()))
+            .collect();
+        assert_eq!(rows, [("b", 300, ""), ("x", 200, "C"), ("a", 100, "")]);
+
+        let dirs = s.largest(id, 0, LargestKind::Dirs, 10).unwrap();
+        let rows: Vec<(&str, u64, u64, &str)> = dirs
+            .iter()
+            .map(|r| {
+                (
+                    r.entry.name.as_str(),
+                    r.own,
+                    r.entry.allocated,
+                    r.dir.as_str(),
+                )
+            })
+            .collect();
+        assert_eq!(rows, [("/r", 400, 600, ""), ("C", 200, 200, "")]);
+
+        let x = files[1].entry.id;
+        let c = s.ancestors(id, x).unwrap()[1].id;
+        let scoped = s.largest(id, c, LargestKind::Files, 10).unwrap();
+        assert_eq!(scoped.len(), 1);
+        assert_eq!(scoped[0].dir, "");
     }
 
     #[test]

@@ -196,6 +196,23 @@ export const getChildren = (
   limit: number,
 ) => invoke<ChildrenPage>('get_children', { scan, node, sort, order, offset, limit })
 
+/** What `getLargest` ranks. */
+export type LargestKind = 'files' | 'dirs'
+
+/** One row of `getLargest`. */
+export interface LargestEntry {
+  /** The node; for a folder, `allocated` is its whole subtree. */
+  entry: NodeEntry
+  /** Bytes it was ranked by: a file's own, a folder's direct files'. */
+  own: number
+  /** The folder holding it, relative to the scope and `/`-joined; empty for the scope and its direct children. */
+  dir: string
+}
+
+/** The `limit` (at most `MAX_PAGE`) largest files or folders anywhere below `node`, largest first. */
+export const getLargest = (scan: ScanId, node: number, kind: LargestKind, limit: number) =>
+  invoke<LargestEntry[]>('get_largest', { scan, node, kind, limit })
+
 /** Most cells `getTreemap` returns. */
 export const MAX_CELLS = 5000
 /** Deepest treemap the backend lays out. */
