@@ -9,6 +9,33 @@ Give the task you are actively working on an `h3` heading under **In Progress** 
 
 ## In Progress
 
+### macOS: `/` taramasında Data birimi iki kez sayılıyor (firmlink) — uygulandı, smoke test geçti
+
+**Durum (2026-11-17)**: Dal `fix/macos-firmlink-double-count` (main 3add5b1'den). `feat/largest-items` smoke testinde görüldü (995 GB disk, toplam ~1,6 TB).
+
+**Kök neden**: macOS 10.15+ sistemi salt okunur Sistem birimi ile Data birimine böler. `/usr/share/firmlinks` içindeki her satır (`/Users`, `/Applications`, `/private`, `/usr/local`…) Data birimindeki bir klasörü köke bağlar. Aynı klasör `/System/Volumes/Data/<hedef>` altında da görünür. `stat` her iki yolda da aynı `st_dev` (16777232) ve aynı inode'u verir (`/Users` = `/System/Volumes/Data/Users` = 15888). Bu yüzden `skipped_mounts` sayan cihaz kontrolü bu durumu yakalayamaz. Sabit bağlantı ayıklaması da yalnız `nlink > 1` dosyalara bakar, tek bağlantılı dosyalar iki yoldan iki kez sayılır.
+
+**Neden `/System/Volumes/Data`'yı tümüyle atlamıyoruz**: Data kökünde firmlink'i olmayan içerik var (`.Spotlight-V100`, `.DocumentRevisions-V100`, `MobileSoftwareUpdate`, `usr` ve `System` altındakilerin çoğu, `sw`, `mnt`). Tümüyle atlamak bunları eksik sayar.
+
+**Başka araçlar**: ncdu `--exclude-firmlinks` ile firmlink kaynaklarını (`/Users`…) atlayıp içeriği Data altında sayar. Biz tersini yapıyoruz: kullanıcının tanıdığı yollar (`/Users`, `/Applications`) dolu kalır, Data altındaki takma adlar kayda geçer ama girilmez.
+
+#### Tasarım
+1. **Kural**: `/System/Volumes/Data/<hedef>` yoluna, kaynağı (`/<kaynak>`) ve kendisi asıl tarama kökünün altındaysa girilmez. `/` ve `/System` taramaları ilgili takma adları atlar. `/System/Volumes/Data` ya da `/Users` taramasında hiçbir şey atlanmaz.
+2. **Çalışma anında doğrulama**: Bir çift yalnız iki taraf da varsa ve `(dev, file_id)` aynıysa kullanılır. Bayat ya da eksik satır eksik saymaya yol açmaz.
+3. **Kayıt**: Takma ad klasörü ağaçta kendi boyutuyla durur, çocukları listelenmez. `ScanStats::skipped_mounts` artar, alanın belgesi genişler (yeni alan yok, genel API değişmez).
+4. **Yer**: `cleany-core` içinde özel `mod firmlinks` (ayrıştırma, seçim, doğrulama). `cleany-platform`'a yeni `pub fn` eklemiyoruz. macOS dışında tablo boştur.
+5. **Canlı yenileme**: `refresh::request` ağacın kök yolunu özel alanda `DirRequest`'e koyar. `read` takma ad yolunu `Outside` sayar. Alt ağaç taramaları `pub(crate)` bir giriş noktasıyla asıl kökü bilir, böylece `/System/Volumes/Data` altağaç yenilemesi çiftleri geri getirmez. FSEvents `/` izlenirken değişiklikleri `/Users/...` yazımıyla bildiriyor (denendi), `Rebase` değişmez.
+
+#### Testler
+- Ayrıştırma ve seçim: kök `/`, `/System`, `/System/Volumes/Data`, `/Users`.
+- Geçici klasörde, takma ad listesi enjekte edilerek: bayt bir kez sayılır, takma ad çocuksuz kaydedilir, sayaç artar.
+- Yenileme: takma adın üst klasörünün Subtree yenilemesi toplamı değiştirmez.
+
+#### Doğrulama
+`cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`, `cargo build --release`, sonra `cleany scan /` ile `/System/Volumes/Data` + ~13 GB sistem birimi karşılaştırması.
+
+**Sonuç (release CLI, 2026-11-17)**: `cleany scan /` → 815,0 GB ayrılmış (önce ~1,6 TB), 98 sn, `skipped_mounts` 31. `cleany scan /System/Volumes/Data` → 801,5 GB. Fark 13,4 GB; `df /` sistem birimi için 13,8 GB (13 434 560 KiB) gösteriyor, yakın. Data birimi `diskutil` ile 938,9 GB kullanıyor; aynı ~137 GB açık hiçbir şey atlanmayan yalnız-Data taramasında da var, yani bu düzeltmeden gelmiyor. Taramada 1156 okunamayan yol var (terminalde Tam Disk Erişimi yok); `tmutil listlocalsnapshots /` anlık görüntü göstermiyor. Açığın tam kaynağı doğrulanmadı (Not Now). fmt, clippy (`-D warnings`), `cargo test` temiz. Yenileme testi, düzeltme geri alınınca kırılıyor (mutasyonla denendi). Çalıştırılmayanlar: tüm workspace / Tauri release build, Linux ve Windows.
+
 ### M5 — En büyük N dosya ve klasör (Notion #36) — onaylandı, uygulandı, doğrulandı 2026-11-17
 
 **Durum (2026-11-17)**: Yalnız plan. Kod yazılmadı. Dal açılacak: `feat/largest-items` (main 3add5b1'den).
@@ -1309,7 +1336,7 @@ _2026-11-14: Plan, bağımlılıklar ve Windows **A seçeneği** onaylandı._
 
 Parked scope — deferred work, revisit when prioritized. (CLAUDE.md → Scope Discipline routes out-of-scope items here.)
 
-- **Macintosh HD toplamı diski aşıyor** (2026-11-16, #30 denemesi sırasında): tarama 1,6 TB gösterdi (System 833 GB, Users 626 GB), disk ise 953 GB dolu; ilerleme çubuğu da "yaklaşık 953 GB" tahminini geçti. `cross_mounts: false` ve "20 diğer birim dışarıda" olmasına rağmen Data birimi `/System/Volumes/Data` ve firmlink'ler üzerinden iki kez sayılıyor olabilir. Ayrı hata; #30 kapsamı dışında.
+- `/` taraması 815 GB, Data birimi `diskutil` ile 938,9 GB kullanıyor (2026-11-17). ~137 GB'lık açık yalnız-Data taramasında da var. Okunamayan yollar (Tam Disk Erişimi yokken 1156) ve temizlenebilir alan olası nedenler, doğrulanmadı.
 - **Taramanın disk önbelleği** (2026-11-16, canlı tarama planından ertelendi): yalnız süreç yeniden başlamasını çözer; doğru olması için FSEvents `sinceWhen` geriye oynatması gerekir. v1.x "Anlık görüntü ve fark" ile birlikte ele alınmalı. Linux (`inotify` izleme sınırı) ve Windows canlı izleme de ayrı iş.
 - **Silme logunu uygulamadan göster** (#32'den ertelendi): "Logu göster" düğmesi `deletions.jsonl` dosyasını dosya yöneticisinde açabilir; yeni IPC komutu gerektirdiği için #32 kapsamı dışında bırakıldı.
 - **Döküm "Aç →" dokunmatikte görünmüyor** (#28 interface-check, Minor): `ui/src/screens/Summary.tsx:309` yalnızca hover/odakta görünür; Tailwind v4 `group-hover` `(hover: hover)` ile kapılı olduğundan dokunmatik ekranda tıklanabilir ama görünmez. Masaüstü uygulamasında pratik etkisi yok; dokunmatik/Linux tablet desteği gündeme gelirse `@media (hover: none)` altında sürekli göster.
