@@ -5,6 +5,7 @@
 //! [`refresh`], the treemap layout in [`mod@treemap`] and the
 //! sunburst layout in [`mod@sunburst`].
 
+pub mod largest;
 mod names;
 pub mod refresh;
 pub mod scan;
@@ -12,6 +13,7 @@ pub mod sunburst;
 pub mod tree;
 pub mod treemap;
 
+pub use largest::{largest_dirs, largest_files};
 pub use refresh::{
     Applied, Change, Coalescer, Depth, DirRequest, DirUpdate, Outcome, RefreshPlan, refresh_dir,
 };

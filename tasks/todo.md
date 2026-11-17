@@ -9,7 +9,97 @@ Give the task you are actively working on an `h3` heading under **In Progress** 
 
 ## In Progress
 
-### M4 — Kalıcı silme: ayardan açılır, yazarak onaylanır (Notion #31) — uygulandı, smoke test geçti
+### M5 — En büyük N dosya ve klasör (Notion #36) — onaylandı, uygulandı, doğrulandı 2026-11-17
+
+**Durum (2026-11-17)**: Yalnız plan. Kod yazılmadı. Dal açılacak: `feat/largest-items` (main 3add5b1'den).
+
+**Hedef**: Gözat ekranında, bulunulan klasörün altındaki en büyük 100 dosya ya da klasör, iç içe derinlik fark etmeksizin tek bir listede görünsün. Listeden seçilen öğe için mevcut eylemler (Finder'da göster, aç, yolu kopyala, çöpe taşı, sepete ekle, kalıcı sil) çalışsın.
+
+**Bağlam**: `docs/PLAN.md:43` ve `:173` (M5). Şu an yalnız doğrudan çocuklar sıralanıyor. 40 GB'lık bir video, beş klasör derinde olunca tabloda, haritada ve halkada kayboluyor. CLI'nin `crates/cleany-cli/src/main.rs:26` raporu da yalnız doğrudan çocukları listeliyor.
+
+#### Tasarım kararları (önerilen varsayılanlar, onayınızla kesinleşir)
+1. **Yer**: Gözat ekranına dördüncü görünüm, “Tablo · Harita · Halka · En büyükler”. Seçim mevcut `cleany.browseView` anahtarında saklanır. Özet ekranına dokunulmaz.
+2. **Kapsam**: Bulunulan klasörün alt ağacı. Kökteyken tüm tarama. Klasör değişince liste yeniden okunur.
+3. **İki kip**: “Dosyalar” ve “Klasörler” düğmesi (Tablo/Harita seçicisiyle aynı segment bileşeni).
+4. **Klasörlerde iç içe sorunu**: Üst klasör her zaman alt klasöründen büyük olduğu için alt ağaç boyutuyla sıralamak listeyi bir zincirle doldurur (`~`, `~/Library`, `~/Library/Caches`…). Önerim: klasörü **yalnız doğrudan içindeki dosyaların** toplamıyla sıralamak. Böylece baytların fiilen durduğu klasörler öne çıkar, zincir oluşmaz. Satırda bu değer ve yanında soluk tonda alt ağaç toplamı gösterilir.
+5. **N**: Sabit 100. IPC `limit` alır (en fazla `MAX_PAGE` = 1000). “Daha fazla göster” bu işte yok.
+6. **Ölçü**: `allocated` (döküm ve haritayla aynı). Eşitlikte düğüm kimliği, sonuç kararlı.
+7. **Neler sayılmaz**: Sabit bağlar (`HARDLINK`, baytı başka düğümde sayılıyor) ve sembolik bağlar. Bulut yer tutucularının `allocated` değeri 0 olduğundan kendiliğinden düşer.
+8. **Satır**: Ad, bulunulan klasöre göre üst yol (soluk, ortadan kısaltılmış), boyut (tabular). Seçim, ok tuşları ve klavye kısayolları Tablo ile aynı. Klasörde Enter o klasöre girer. Dosyada Enter bir şey yapmaz (Aç `O` ile).
+9. **Canlı güncelleme**: FSEvents yaması ve çöpe taşıma sonrası mevcut yenileme sayacı listeyi yeniden okutur. Ayrı bir mekanizma yok.
+10. **Algoritma**: Alt ağaçta tek DFS, `N` boyutlu min-yığın, O(n log N). Önbellek yok. 10 milyon düğümde süre ölçülür, 150 ms'yi aşarsa önbellek ayrı iş olarak açılır.
+
+#### Onay gerekenler (korumalı değişiklikler)
+- **Yeni genel core API**: `cleany_core::largest` modülü, `largest_files(&Tree, NodeId, usize) -> Vec<NodeId>` ve `largest_dirs(&Tree, NodeId, usize) -> Vec<(NodeId, Size)>`; `lib.rs`'ten yeniden dışa aktarım.
+- **Yeni IPC komutu**: `get_largest(scan, node, kind: "files" | "dirs", limit) -> Vec<LargestEntry>`. `LargestEntry { entry: NodeEntry, own: u64, dir: String }` (`own`: klasörün doğrudan dosya toplamı, dosyada kendi boyutu; `dir`: bulunulan klasöre göre üst yol). `invoke_handler` listesine eklenir. Yetki dosyalarına (`capabilities/`) dokunulmaz, uygulama komutları zaten izinli.
+- Yeni bağımlılık yok. `Cargo.toml` değişmez.
+
+#### Testler
+Kod yazılmadan önce yazılır, şu anki ağaçta derlenmez ya da kırmızıdır:
+- `largest::tests::files_largest_first_across_depths` — derindeki büyük dosya, sığdaki küçüklerin önüne geçer.
+- `largest::tests::files_limit_caps_results` — `limit` kadar öğe, 0 için boş liste.
+- `largest::tests::files_scoped_to_subtree` — kardeş klasördeki dosya listeye girmez.
+- `largest::tests::files_skip_hardlinks_symlinks_and_dirs` — yalnız gerçek dosyalar.
+- `largest::tests::dirs_rank_by_direct_files_not_subtree` — büyük alt klasörü olan üst klasör, kendi dosyaları azsa geride kalır.
+- `largest::tests::dirs_include_scope_root_itself` — bulunulan klasörün kendi doğrudan dosyaları da sayılır.
+- `largest::tests::ties_break_by_id` — eşit boyutlarda sıra kararlı.
+- `largest::tests::detached_nodes_are_gone` — `detach()` sonrası öğe listede yok.
+- `session::tests::largest_unknown_node_is_an_error` — `SessionError::UnknownNode`.
+- `session::tests::largest_dir_is_relative_to_scope` — `dir` alanı bulunulan klasöre göreli, doğrudan çocukta boş.
+
+UI için birim test altyapısı yok. Davranış uygulamada smoke test ile doğrulanır.
+
+#### Yaklaşım
+1. Testler, sonra `crates/cleany-core/src/largest.rs` (DFS + `BinaryHeap<Reverse<…>>`).
+2. `src-tauri/src/session.rs`: `Sessions::largest(...)`, `LargestEntry`, göreli yol üretimi (mevcut `path()` yardımcılarıyla).
+3. `src-tauri/src/lib.rs`: `get_largest` komutu ve kayıt.
+4. `ui/src/lib/ipc.ts`: `LargestEntry`, `LargestKind`, `getLargest`.
+5. `ui/src/screens/Largest.tsx`: liste görünümü. Tablo'nun satır, seçim ve klavye düzenini yeniden kullanır, yeni paylaşılan bileşen eklemez.
+6. `ui/src/screens/Browse.tsx`: `VIEWS` dizisine `largest`, metin ve ipucu anahtarları, seçimin eylem çubuğuna bağlanması.
+7. `ui/src/lib/i18n.ts`: TR/EN metinler (resmi “siz”, noktalı virgül ve tire yok).
+8. CLI'ya dokunulmaz (Not Now).
+
+#### Dosyalar
+- `crates/cleany-core/src/largest.rs` — yeni modül ve testleri.
+- `crates/cleany-core/src/lib.rs` — `pub mod largest` ve dışa aktarım.
+- `src-tauri/src/session.rs` — `largest()`, `LargestEntry`, testler.
+- `src-tauri/src/lib.rs` — `get_largest` komutu.
+- `ui/src/lib/ipc.ts` — tip ve çağrı.
+- `ui/src/screens/Largest.tsx` — yeni görünüm.
+- `ui/src/screens/Browse.tsx` — dördüncü görünüm, seçim bağlantısı.
+- `ui/src/lib/i18n.ts` — metinler.
+
+#### Doğrulama
+1. `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo check --all-targets`, `cargo test`, `cargo build --release`.
+2. `pnpm` tip denetimi ve derleme, konsol hatası yok.
+3. Smoke test (tauri dev): ev klasörünü tarayıp En büyükler görünümünde Dosyalar ve Klasörler kiplerini görmek, bir klasöre girip listenin daraldığını görmek, `~/cleany-trash-test` içindeki bir dosyayı çöpe taşıyıp listeden düştüğünü görmek. Gerçek dosyalara silme yok.
+4. 10 milyon düğüme yakın tarama (ya da en büyük birim) üzerinde `get_largest` süresi ölçülür.
+5. Ekran görüntüleri 375 / 768 / 1280, açık ve koyu. Klavye ile gezinme, odak halkaları. `/interface-check` ve `/slop-audit` (yalnız yeni görünüm).
+
+#### Açık sorular
+- Klasör sıralaması için 4. maddedeki “doğrudan dosyalar” önerisi uygun mu, yoksa alt ağaç boyutu ile sıralayıp zaten listede olan bir klasörün altındakileri mi gizleyelim?
+- Görünüm Gözat'a mı, yoksa Özet (döküm) ekranına ayrı bölüm olarak mı?
+
+#### Riskler
+- Çok büyük taramalarda her klasör değişiminde tam DFS gecikme yaratabilir. Ölçüm 10. maddede, gerekirse önbellek ayrı iş.
+- Kilit (`lock(&self.state)`) DFS süresince tutulur, canlı güncellemeler o arada bekler. Süre ölçülerek kabul edilir.
+- Göreli yolda Unicode olmayan adlar `NodeEntry.name` gibi kayıplı gösterilir.
+
+#### Not Now
+- CLI raporuna `--top N` ile özyinelemeli en büyük dosyalar.
+- “Daha fazla göster” ve 100'den uzun liste.
+- Tür dağılımı, eski dosyalar, boş klasörler (M5'in diğer kalemleri).
+- Tarayıcı firmlink'leri iki kez sayıyor (`Users/...` ve `System/Volumes/Data/...`), 995 GB diskte toplam 1,6 TB görünüyor. #36 dışı, ayrı iş.
+
+## Up Next
+
+_(boş)_
+
+---
+
+## Done
+
+### M4 — Kalıcı silme: ayardan açılır, yazarak onaylanır (Notion #31) ✅ 2026-11-17 (#37 merged)
 
 **Durum (2026-11-17)**: Uygulandı, commit edilmedi. Ayrıntı aşağıda "Durum" başlığında. Dal: `feat/permanent-delete` (main a3b4a12'den).
 
@@ -112,14 +202,6 @@ Give the task you are actively working on an `h3` heading under **In Progress** 
 #### Riskler
 - Windows'ta junction ve salt okunur dosya davranışı CI'da yalnız derlenerek doğrulanır, gerçek silme denenmez.
 - Yarım kalan klasör silmesi geri alınamaz. Ön kontroller ve yazarak onay bu yüzden zorunlu.
-
-## Up Next
-
-_(boş)_
-
----
-
-## Done
 
 ### M4 — Tauri yetkilerini daraltma + CSP (Notion #34) ✅ 2026-11-17 (#36 merged)
 
