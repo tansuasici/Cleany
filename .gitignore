@@ -27,3 +27,15 @@ Thumbs.db
 
 # Claude kit state
 .hook-state/
+
+# Agent kit and working notes (kept locally, not published)
+.claude/
+ui/.claude/
+agent_docs/
+tasks/
+scripts/
+CLAUDE.md
+CLAUDE.project.md
+.kit-manifest
+.kit-baseline
+reports/
