@@ -16,8 +16,8 @@ use tauri::ipc::Channel;
 use access::{AccessError, DiskAccess};
 use actions::ActionError;
 use session::{
-    ChildrenPage, NodeEntry, ScanEvent, ScanId, ScanSummary, SessionError, Sessions, SortKey,
-    SortOrder, SunburstSlice, TrashReport, TreemapSlice,
+    ChildrenPage, LargestEntry, LargestKind, NodeEntry, ScanEvent, ScanId, ScanSummary,
+    SessionError, Sessions, SortKey, SortOrder, SunburstSlice, TrashReport, TreemapSlice,
 };
 use volumes::VolumeEntry;
 
@@ -97,6 +97,18 @@ fn get_children(
     limit: u32,
 ) -> Result<ChildrenPage, SessionError> {
     sessions.children(scan, node, sort, order, offset, limit)
+}
+
+/// The `limit` largest files or folders anywhere below a node.
+#[tauri::command(async)]
+fn get_largest(
+    sessions: tauri::State<'_, Sessions>,
+    scan: ScanId,
+    node: u32,
+    kind: LargestKind,
+    limit: u32,
+) -> Result<Vec<LargestEntry>, SessionError> {
+    sessions.largest(scan, node, kind, limit)
 }
 
 /// A node's treemap in a `width` × `height` CSS-pixel box.
@@ -228,6 +240,7 @@ pub fn run() {
             cancel_scan,
             attach_scan,
             get_children,
+            get_largest,
             get_ancestors,
             get_treemap,
             get_sunburst,
