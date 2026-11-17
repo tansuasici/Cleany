@@ -12,11 +12,14 @@ import { useT } from '../useT'
 export function BasketBar({
   basket,
   onTrash,
+  onDelete,
   onRemove,
   onClear,
 }: {
   basket: Basket
   onTrash: () => void
+  /** Set while Settings allow permanent delete. */
+  onDelete?: () => void
   onRemove: (id: number) => void
   onClear: () => void
 }) {
@@ -48,6 +51,11 @@ export function BasketBar({
             </span>
           </Button>
           <Button onClick={onClear}>{t('basket.clear')}</Button>
+          {onDelete && (
+            <Button onClick={onDelete} aria-haspopup="dialog">
+              {t('basket.delete')}
+            </Button>
+          )}
           <Button variant="primary" onClick={onTrash} aria-haspopup="dialog">
             {t('basket.trash')}
           </Button>

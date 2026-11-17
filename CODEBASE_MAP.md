@@ -58,7 +58,9 @@ Existing tools are platform-specific, slow on large disks, or unsafe when deleti
 | `crates/cleany-platform/src/watch.rs` | Live change notifications below a scan root (macOS FSEvents via `notify`; other OSes unsupported), paths mapped back to the root's spelling (ADR-0006) |
 | `src-tauri/src/session/live.rs` | Live session loop: one thread per scan feeds watcher changes through the `Coalescer`, refreshes the finished tree and emits `changed` / `outdated` on the scan's channel (ADR-0006) |
 | `crates/cleany-platform/src/protected.rs` | Per-OS list of folders never trashed (`/System`, `C:\Windows`, `~/Library`…) |
-| `src-tauri/src/deletion_log.rs` | Deletion log: one JSON line per trash attempt, `deletions.jsonl` in the app log folder |
+| `src-tauri/src/deletion_log.rs` | Deletion log: one JSON line per trash or permanent delete attempt (`removal`), `deletions.jsonl` in the app log folder |
+| `crates/cleany-platform/src/trash.rs` | Move to the OS trash, and `delete_permanently` (no trash, used only after Settings allow it and a typed confirmation) |
+| `ui/src/components/SettingsDialog.tsx` | Header Settings button and dialog; holds the interface language and the permanent delete switch (both stored in localStorage) |
 
 ## Architecture
 

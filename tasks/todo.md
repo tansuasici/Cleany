@@ -9,7 +9,119 @@ Give the task you are actively working on an `h3` heading under **In Progress** 
 
 ## In Progress
 
-### M4 — Tauri yetkilerini daraltma + CSP (Notion #34) — uygulandı, doğrulandı, commit bekliyor
+### M4 — Kalıcı silme: ayardan açılır, yazarak onaylanır (Notion #31) — uygulandı, smoke test geçti
+
+**Durum (2026-11-17)**: Uygulandı, commit edilmedi. Ayrıntı aşağıda "Durum" başlığında. Dal: `feat/permanent-delete` (main a3b4a12'den).
+
+**Hedef**: Kullanıcı ayarlardan açarsa, seçili öğeyi ya da sepeti çöpe uğratmadan diskten silebilsin. Silme, sabit bir sözcük yazılmadan onaylanamasın. Ayar kapalıyken arayüzde kalıcı silmenin izi bile olmasın. Çöpe taşıma varsayılan olarak kalır (ADR-0004).
+
+**Bağlam (bugün)**:
+- Akış: `trash_nodes` → `actions::trash` → `Sessions::trash(scan, nodes, mover)` → `(TrashReport, Vec<Deletion>)` → `deletion_log::append_trash`.
+- `plan_trash` kökü ve bulut yer tutucusu taşıyan klasörleri mover'a hiç göndermez. `move_one` sırayla şunlara bakar: diskte yoksa `Gone`, `Protection::covers` ise `Protected` (bağlama noktası **içeren** klasör dahil, bu yüzden özyinelemeli silme başka bir birime inemez), türü değiştiyse `Failed`.
+- Günlük `action:"trash"` ve `to:"osTrash"` değerlerini sabit yazıyor. #32 planı #31 için `delete` ve `permanent` değerlerini ayırmıştı.
+- Arayüzde ayar ekranı yok. Kalıcı tercihler `localStorage` içinde `cleany.*` anahtarlarıyla tutuluyor (`cleany.locale`, `cleany.accessDismissed`).
+
+#### Tasarım kararları
+1. **Ayrı komut**: `delete_nodes(scan, nodes)`. `trash_nodes` için bir kip parametresi eklemiyoruz, böylece unutulmuş bir varsayılan hiçbir zaman "kalıcı" anlamına gelemez.
+2. **Platform işlevi**: `cleany_platform::trash::delete_permanently(path) -> Result<(), DeleteError>` (`Gone | Failed(String)`, `TrashError` ile aynı biçimde). Davranışı:
+   - `symlink_metadata` ile bakar, bağlantıyı asla izlemez. Gerçek klasör `fs::remove_dir_all` ile silinir. Bu işlev std 1.58.1'den beri sembolik bağlantıları izlemez ve TOCTOU'ya karşı korumalıdır.
+   - Dosya ve bağlantı `fs::remove_file` ile silinir. Windows'ta klasör bağlantısı ve junction `fs::remove_dir` ile silinir.
+   - Salt okunur dosyanın özniteliğine dokunmaz. İşletim sistemi reddederse sonuç `Failed` olur.
+   - Yeni bağımlılık yok.
+3. **Ortak ön kontroller**: `move_one` içindeki gone, protected ve kind kontrolleri `precheck` adlı bir işleve çıkar. `move_one` (çöp) ve yeni `remove_one` (kalıcı) ikisi de bunu kullanır.
+4. **Sonuç türü**: `TrashOutcome::Deleted` (IPC: `{ kind: 'deleted' }`). Değişen yerler:
+   - `Sessions::trash` içinde `gone_from_disk` ve sayaç;
+   - `outcome_name` → `"deleted"`;
+   - `ipc.ts` birleşimi;
+   - `Browse.tsx` içindeki `describe()`.
+   
+   Rapordaki `trashed` sayısı "bu istekle diskten kalkan" anlamına genişler, alan adı aynı kalır ve doc güncellenir. `Sessions::trash`, ağacı aynı şekilde güncelleyip `edits` sayacını artırdığı için canlı izleme (#35) değişmeden uyumlu kalır.
+5. **Yarım kalan silme**: `remove_dir_all` yarıda hata verirse öğe `Failed` olur, ağaçta kalır ve `freed` sayılmaz. İçinden silinenleri canlı izleyici (FSEvents) yamalar, klasörün boyutu kendiliğinden küçülür. Rapor metni bunu dürüstçe söyler: "bir kısmı silinmiş olabilir". Bu durum smoke testte kilitli bir dosyayla denenecek.
+6. **Günlük**: `append_trash` yerine `append(dir, Removal, &deletions)` gelir, `enum Removal { Trash, Delete }` ile. `Trash` → `trash` / `osTrash`. `Delete` → `delete` / `permanent`.
+7. **Ayar**: `localStorage` → `cleany.permanentDelete = '1'`, store'da `permanentDelete` ve `setPermanentDelete`. Varsayılan kapalı. **Arka uç ayarı denetlemez.** Komutu yalnız kendi webview'imiz çağırabildiği için (#34: boş izin listesi ve sıkı CSP) bu kabul edilebilir. İstenirse ayar Rust tarafına taşınabilir (ek bir komut ve bir dosya gerekir).
+8. **Ayar yeri**: başlıkta dil menüsünün yanına bir "Ayarlar" düğmesi gelir. Bu düğme bir `<dialog>` açar, içinde tek bir onay kutusu bulunur: "Kalıcı silmeyi etkinleştir". Altında dipnot: "Açıkken öğeleri çöpe taşımadan silebilirsiniz. Kalıcı olarak silinen öğeler geri alınamaz." Açarken ek bir onay sorulmaz, çünkü asıl onay her silmede yazılarak verilir.
+9. **Eylemler (ayar açıkken)**:
+   - `ActionBar` içinde "Kalıcı olarak sil" düğmesi. Kısayol macOS'ta ⌥⌘⌫ (Finder'ın "Hemen sil" kısayolu), diğerlerinde Shift+Delete. `trashKey` Alt ve Shift'i zaten yok saydığı için çakışma yok.
+   - `BasketBar` içinde ikincil "Kalıcı olarak sil" düğmesi.
+   - Kök için devre dışıdır, tıpkı Çöpe taşı gibi.
+10. **Onay penceresi**: `TrashConfirm` bir `removal: 'trash' | 'delete'` alır.
+    - `delete` kipinde "geri alabilirsiniz" satırı çıkar. Yerine şu gelir: "Bu işlem geri alınamaz. Öğe çöpe gitmez, diskten hemen silinir."
+    - Bir giriş alanı eklenir: "Onaylamak için **sil** yazın" (en: **delete**). Tek öğe ve sepet için aynı sözcük kullanılır, çünkü uzun ya da Unicode adların yazılması zor.
+    - Karşılaştırma: `trim()` + `toLocaleLowerCase(locale)`, Türkçe i/İ/ı/I için.
+    - Sözcük tutana kadar "Kalıcı olarak sil" devre dışı kalır. Enter yalnız eşleşince gönderir.
+    - Odak giriş alanına gider. Escape vazgeçer.
+    - Düğme `primary` kalır, kırmızı kullanılmaz (Don'ts: korkutma yok, negatif renk yalnız gerçek hata için).
+11. **Metin**: tr ve en dilleri için yeni anahtarlar:
+    - `delete.*`: başlık, uyarı, yazma etiketi, düğme, çalışıyor, bitti ("“x” kalıcı olarak silindi. 1,2 GB alan boşaldı."), başarısız, yarım;
+    - `settings.*`.
+
+    Metinler "siz" hitabıyla yazılır, noktalı virgül ve tire kullanılmaz.
+
+#### Onay gerekenler
+- Yeni genel API: `cleany_platform::trash::delete_permanently` ve `DeleteError`.
+- IPC: `delete_nodes` komutu ve `TrashOutcome` içine `deleted` varyantı.
+- Ayarın yalnız `localStorage` içinde tutulması, arka ucun ayarı denetlememesi (karar 7).
+- Paylaşılan arayüz: başlıktaki yeni Ayarlar düğmesi ve penceresi, `TrashConfirm` değişikliği.
+- Bağımlılık, `Cargo.toml`, capability ya da CSP değişikliği **yok**.
+
+#### Testler
+- Platform (`temp_dir` içindeki karalama klasörlerinde):
+  - dosya ve iç içe klasör siliniyor;
+  - klasöre işaret eden bir bağlantı silinince hedef yerinde kalıyor;
+  - olmayan yol `Gone` dönüyor.
+- `actions`: `remove_one` kök ve tür uyuşmazlığında hiçbir şey silmeden `Protected` ya da `Failed` dönüyor.
+- `session`: `Deleted` sonucu ağaçtan çıkarıyor, sayıyor ve `freed` değerine ekliyor.
+- `deletion_log`: `action:"delete"`, `to:"permanent"`, `outcome:"deleted"`.
+- `ipc_ts_mentions_every_action_tag` testine `'delete_nodes'` eklenir.
+- Arayüz: `pnpm typecheck` + `build`.
+
+#### Dosyalar
+- `crates/cleany-platform/src/trash.rs`
+- `src-tauri/src/actions.rs`, `session.rs`, `deletion_log.rs`, `lib.rs`
+- `ui/src/lib/ipc.ts`, `lib/i18n.ts`, `store.ts`, `App.tsx`
+- `screens/Browse.tsx`, `BrowseActions.tsx`, `Basket.tsx`, `useBrowseActions.ts`
+- yeni `components/SettingsDialog.tsx`
+- `CODEBASE_MAP.md`
+
+#### Doğrulama
+- `cargo fmt --check`, `clippy --all-targets -D warnings`, `check`, `test`, `build --release`.
+- Windows ve Linux için çapraz hedef clippy.
+- Arayüz için ekran görüntüleri: 375, 768 ve 1280 genişlikte, açık ve koyu tema, yalnız klavyeyle.
+- Smoke test **yalnız `~/cleany-trash-test` içinde ve kullanıcıya sorduktan sonra** yapılır:
+  - tek dosya ve sepetle kalıcı silme;
+  - `deletions.jsonl` satırlarını kontrol etme;
+  - ayar kapalıyken düğmenin ve kısayolun yok olduğunu görme.
+
+#### Kararlar (2026-11-17)
+- Ayar yeri: başlıkta ayrı bir Ayarlar penceresi.
+- Yazılacak sözcük: tek öğede de sepette de sabit "sil" / "delete".
+
+#### Durum (2026-11-17)
+- Rust ve UI kontrolleri temiz: fmt, clippy (Windows ve Linux çapraz dahil), test, release derlemesi, typecheck, lint, build.
+- Arayüz sahte IPC ile tarayıcıda denendi: 375, 768 ve 1280 genişlik, açık ve koyu tema, yalnız klavye. Boş veya eksik sözcükle Enter onaylamıyor, "SİL" kabul ediliyor, Escape kapatıyor ve odak düğmeye dönüyor, ayar kapalıyken düğmeler ve ⌥⌘⌫ devre dışı.
+- Düzeltme: Ayarlar penceresi kapanınca odak gövdeye düşüyordu, artık pencere kapandıktan sonra Ayarlar düğmesine dönüyor.
+- Dil menüsü kaldırıldı (`LocaleMenu.tsx` silindi), dil seçimi Ayarlar penceresine taşındı (radyo düğmeleri, her dil kendi adıyla). Tarayıcıda tr/en, Escape ve odak dönüşü, 375 genişlik ve koyu tema denendi.
+- Smoke test (debug paket, `~/cleany-trash-test`, yalnız klavye) geçti:
+  - Tek dosya ⌥⌘⌫ ile silindi. Boş alanla Enter onaylamadı, "Delete" (büyük harf) kabul edildi. Dosya Çöp'e gitmedi.
+  - Sepetteki 3 öğe (2 dosya ve bir klasör) sepet çubuğundaki düğmeyle silindi, 3.0 MB.
+  - `locked` (önce kilitli `inner`): `remove_dir_all` ilk hatada durdu, hiçbir şey silinmedi, Failed döndü, ağaçta aynen kaldı.
+  - `locked2` (önce silinebilir dosya, sonra kilitli klasör): Failed döndü, ağaçta kaldı, izleyici 8.2 KB / 2 dosyadan 4.1 KB / 1 dosyaya yamaladı.
+  - `deletions.jsonl` her satırda `"action":"delete"`, `"to":"permanent"` ve doğru `outcome` ile geçerli JSONL.
+- Gözlem (Not Now): dar pencerede eylem çubuğundaki "Kalıcı olarak sil" ikinci satıra iniyor. Yeniden sıralanan tabloda seçim, silinmek istenen satırdan ilk satıra kayıyor.
+
+#### Riskler
+- Windows'ta junction ve salt okunur dosya davranışı CI'da yalnız derlenerek doğrulanır, gerçek silme denenmez.
+- Yarım kalan klasör silmesi geri alınamaz. Ön kontroller ve yazarak onay bu yüzden zorunlu.
+
+## Up Next
+
+_(boş)_
+
+---
+
+## Done
+
+### M4 — Tauri yetkilerini daraltma + CSP (Notion #34) ✅ 2026-11-17 (#36 merged)
 
 **Durum (2026-11-17)**: Yalnız plan. `src-tauri/capabilities/` ve `tauri.conf.json` korumalı dosyalar, onay gerekiyor. Dal: `feat/capabilities-csp`.
 
@@ -41,16 +153,6 @@ Rust kodu, IPC, bağımlılık, arayüz değişikliği yok.
   - Açılış, birim listesi, tarama ilerlemesi (Channel), döküm, tablo, harita ve halka (canvas), sepet, çöpe taşı, canlı güncelleme.
   - Web Inspector konsolunda CSP ihlali olmamalı.
 - Dev uygulama (`tauri dev`) eskisi gibi açılmalı.
-
----
-
-## Up Next
-
-_(boş)_
-
----
-
-## Done
 
 ### Gezinti — Browse başlığında Geri / İleri ✅ 2026-11-17 (#34 merged)
 
@@ -1050,6 +1152,8 @@ _2026-11-14: 1 → yön A; 2 → `sysinfo`, `zustand` onaylandı, `tauri-specta`
 - Kök tarama (`/`) 1M+ düğüm üretir. Bellek M1'de ölçüldü, ancak oturumda tek ağaç tutulduğundan ikinci tarama birincisini bırakmalı (test: `new_start_cancels_running_scan`).
 
 #### Not Now
+
+- 375 px genişlikte başlıktaki "Ayarlar" metni konum satırını çok kısaltıyor. Masaüstü penceresinin en küçük genişliği 900 px olduğu için gerçek uygulamada görülmüyor. Gerekirse dar ekranda simge kullanılabilir (paylaşılan simge seti onay ister).
 - Treemap, breakdown, top files, arama, reveal/open/trash/delete (M3+, PLAN §3.4).
 - Birden fazla eşzamanlı tarama/sekme.
 - **Tarama sonucu kalıcı değil**: her tarama sıfırdan yürür; sonuç yalnızca oturum belleğinde (tek ağaç). Son taramayı diske yazıp açılışta göstermek ve FSEvents (macOS) / USN günlüğü (Windows) ile artımlı güncelleme yapmak ayrı bir iş (M7 hızlı yollarla birlikte ya da sonrası).

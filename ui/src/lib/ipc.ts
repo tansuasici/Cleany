@@ -221,7 +221,7 @@ export const getSunburst = (scan: ScanId, node: number, depth = 3, minAngle = 0.
 export const getAncestors = (scan: ScanId, node: number) =>
   invoke<NodeEntry[]>('get_ancestors', { scan, node })
 
-/** Rejection value of `revealNode`, `openNode`, `getPath` and `trashNodes`. */
+/** Rejection value of `revealNode`, `openNode`, `getPath`, `trashNodes` and `deleteNodes`. */
 export type ActionError =
   | { kind: 'staleScan' }
   | { kind: 'notReady' }
@@ -238,9 +238,11 @@ export const openNode = (scan: ScanId, node: number) => invoke<void>('open_node'
 /** The node's full path, for the clipboard. */
 export const getPath = (scan: ScanId, node: number) => invoke<string>('get_path', { scan, node })
 
-/** What happened to one item sent to the trash. */
+/** What happened to one item sent to the trash or deleted for good. */
 export type TrashOutcome =
   | { kind: 'trashed' }
+  /** Deleted from disk for good, without the trash. */
+  | { kind: 'deleted' }
   | { kind: 'gone' }
   /** The scan root, a disk or home folder (or above it), a mount point, or a cloud placeholder. */
   | { kind: 'protected' }
@@ -255,8 +257,9 @@ export interface TrashItem {
 export interface TrashReport {
   /** In request order; nodes under another requested node are left out. */
   items: TrashItem[]
-  /** Bytes freed by the trashed items. */
+  /** Bytes freed by the items this request removed from disk. */
   freed: { logical: number; allocated: number }
+  /** Items this request removed from disk, to the trash or for good. */
   trashed: number
   /** The root with its new totals; `null` when a newer scan replaced this one. */
   root: NodeEntry | null
@@ -267,6 +270,13 @@ export interface TrashReport {
  * Never asks: the UI confirms first. Per-item results are in the report.
  */
 export const trashNodes = (scan: ScanId, nodes: number[]) => invoke<TrashReport>('trash_nodes', { scan, nodes })
+
+/**
+ * Deletes the nodes from disk for good, skipping the trash, and takes them out
+ * of the scan tree. Never asks: the UI offers it only when Settings allow it
+ * and asks for a typed confirmation. Same report as `trashNodes`.
+ */
+export const deleteNodes = (scan: ScanId, nodes: number[]) => invoke<TrashReport>('delete_nodes', { scan, nodes })
 
 /**
  * Whether macOS lets the app read protected folders (Mail, Safari, other
