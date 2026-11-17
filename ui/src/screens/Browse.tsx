@@ -2,6 +2,7 @@ import { type KeyboardEvent, useCallback, useEffect, useEffectEvent, useRef, use
 import { Button, ChevronIcon, LeaderRow, ShareBar } from '../components/ui'
 import { formatBytes, formatCount, formatDate, formatShare, truncateMiddle } from '../lib/format'
 import {
+  type LargestKind,
   type NodeEntry,
   type ScanId,
   type SortKey,
@@ -17,6 +18,7 @@ import { BasketBar } from './Basket'
 import { ActionBar, BasketTrashDialog, type Removal, type TrashNote, TrashDialog } from './BrowseActions'
 import { useOs } from '../useOs'
 import { type ActionTarget, actionKeys, deleteKey, trashKey, useBrowseActions } from './useBrowseActions'
+import { Largest } from './Largest'
 import { Sunburst } from './Sunburst'
 import { Treemap } from './Treemap'
 import { useT } from '../useT'
@@ -40,11 +42,16 @@ const NAME_CHARS = 64
 /** The loading line waits this long, so a quick folder change doesn't flash it. */
 const LOADING_DELAY_MS = 250
 
-const VIEWS = ['table', 'map', 'rings'] as const
+const VIEWS = ['table', 'map', 'rings', 'largest'] as const
 type View = (typeof VIEWS)[number]
 const VIEW_KEY = 'cleany.browseView'
-const VIEW_TEXT = { table: 'browse.table', map: 'browse.map', rings: 'browse.rings' } as const
-const HINT_TEXT = { table: 'browse.hint', map: 'browse.mapHint', rings: 'browse.ringsHint' } as const
+const VIEW_TEXT = { table: 'browse.table', map: 'browse.map', rings: 'browse.rings', largest: 'browse.largest' } as const
+const HINT_TEXT = {
+  table: 'browse.hint',
+  map: 'browse.mapHint',
+  rings: 'browse.ringsHint',
+  largest: 'browse.largestHint',
+} as const
 
 function initialView(): View {
   try {
@@ -111,6 +118,8 @@ export function BrowseView({ screen }: { screen: BrowseScreen }) {
   const [cameFrom, setCameFrom] = useState<number | null>(null)
   const trail = useTrail(scan, node)
   const [view, setView] = useState<View>(initialView)
+  // Kept here, so a rebuilt list (after a move) shows the same kind.
+  const [largestKind, setLargestKind] = useState<LargestKind>('files')
   const choose = (next: View) => {
     setView(next)
     try {
@@ -408,6 +417,20 @@ export function BrowseView({ screen }: { screen: BrowseScreen }) {
           revision={done.revision}
           label={t('browse.mapLabel', { name })}
           cameFrom={cameFrom}
+          onOpen={open}
+          onUp={up}
+          onExit={showSummary}
+          onSelect={setPicked}
+        />
+      ) : view === 'largest' ? (
+        <Largest
+          key={rev}
+          scan={scan}
+          node={node}
+          revision={done.revision}
+          label={t('browse.largestLabel', { name })}
+          kind={largestKind}
+          onKind={setLargestKind}
           onOpen={open}
           onUp={up}
           onExit={showSummary}
