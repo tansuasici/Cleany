@@ -9,7 +9,50 @@ Give the task you are actively working on an `h3` heading under **In Progress** 
 
 ## In Progress
 
-### Gezinti — Browse başlığında Geri / İleri
+### M4 — Tauri yetkilerini daraltma + CSP (Notion #34) — uygulandı, doğrulandı, commit bekliyor
+
+**Durum (2026-11-17)**: Yalnız plan. `src-tauri/capabilities/` ve `tauri.conf.json` korumalı dosyalar, onay gerekiyor. Dal: `feat/capabilities-csp`.
+
+**Hedef**: Arayüz yalnız kendi komutlarımızı çağırabilsin. Webview'e yüklenecek içerik yalnız uygulamanın kendi dosyaları olsun. Bir XSS olsa bile pencere, dosya yolu, menü gibi çekirdek API'ler ve dış ağ kapalı kalsın.
+
+**Bağlam (bugün)**:
+- `capabilities/default.json` → `core:default`. Bu set path, event, window, webview, app, image, resources, menu, tray için varsayılan izinleri açıyor.
+- Arayüz bunların hiçbirini kullanmıyor. Tek kullanılan `@tauri-apps/api/core`: `invoke` ve `Channel`.
+- Kendi 15 komutumuz (`generate_handler!`) `build.rs` içinde app manifest olmadığı için izin listesine tabi değil. Bu değişiklikle de öyle kalıyor.
+- CSP: `default-src 'self'; img-src 'self' data: asset: http://asset.localhost; style-src 'self' 'unsafe-inline'; connect-src ipc: http://ipc.localhost`
+  - `asset:` protokolü kullanılmıyor (`convertFileSrc` yok, `assetProtocol` kapalı).
+  - `object-src`, `base-uri`, `form-action`, `frame-src` tanımlı değil, `default-src`'a düşüyor ya da hiç sınırlanmıyor (`base-uri`, `form-action` düşmez).
+
+#### Değişiklikler
+1. `src-tauri/capabilities/default.json`: `"permissions": []`. Yalnız `main` penceresi.
+   - Kanal (`Channel`) mesajları iç `__TAURI_CHANNEL__` eklentisinden geçer, izin istemez. Smoke testte doğrulanacak. Gerekirse en dar izin (`core:event:default` gibi) tek tek eklenir, nedeni buraya yazılır.
+2. `src-tauri/tauri.conf.json` → `app.security`:
+   - `csp`: `default-src 'self'; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src ipc: http://ipc.localhost; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'; worker-src 'none'`
+     - `asset:` ve `http://asset.localhost` çıkar.
+     - `style-src` içinden `'unsafe-inline'` çıkar. React'in `style={{…}}` öznitelikleri (çubuk genişlikleri, transform) için yalnız `style-src-attr 'unsafe-inline'` kalır. Tauri `style-src`'a nonce eklediğinde `'unsafe-inline'` zaten yok sayılırdı. Bu ayrım onu da netleştirir.
+   - `freezePrototype: true`: `Object.prototype` dondurulur, prototip kirletme yoluyla IPC'ye müdahale kapanır.
+3. `tasks/decisions.md`: kısa bir ADR ("Webview yetkileri: boş izin listesi + sıkı CSP"), bundan sonra yeni bir çekirdek API ya da eklenti gerekirse izni dar ekleme kuralıyla.
+
+Rust kodu, IPC, bağımlılık, arayüz değişikliği yok.
+
+#### Doğrulama
+- `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo check --all-targets`, `cargo test`.
+- CSP dev modunda uygulanmıyor (sayfa Vite'tan doğrudan yükleniyor). Bu yüzden asıl test `pnpm tauri build` ile üretilen .app üzerinde:
+  - Açılış, birim listesi, tarama ilerlemesi (Channel), döküm, tablo, harita ve halka (canvas), sepet, çöpe taşı, canlı güncelleme.
+  - Web Inspector konsolunda CSP ihlali olmamalı.
+- Dev uygulama (`tauri dev`) eskisi gibi açılmalı.
+
+---
+
+## Up Next
+
+_(boş)_
+
+---
+
+## Done
+
+### Gezinti — Browse başlığında Geri / İleri ✅ 2026-11-17 (#34 merged)
 
 **Durum (2026-11-16)**: Uygulandı, commit edilmedi. typecheck, oxlint, build temiz; 375/768/1280 açık+koyu ekran görüntüleri ve klavye (Alt+←/→, Ctrl+[/], düz ← üst klasör) sahte IPC ile tarayıcıda doğrulandı. Masaüstü uygulamada ⌘[ elle denenmedi. Dal: `feat/browse-history` (main'den; `feat/live-session` ile çakışmayı küçük tutmak için ayrı worktree).
 
@@ -34,7 +77,7 @@ Give the task you are actively working on an `h3` heading under **In Progress** 
 - `pnpm --dir ui typecheck`, `pnpm --dir ui lint`, `pnpm --dir ui build`.
 - 375 / 768 / 1280 genişlikte, açık ve koyu temada ekran görüntüsü.
 
-### M4 — Seçim sepeti + toplam kazanılacak alan (Notion #33)
+### M4 — Seçim sepeti + toplam kazanılacak alan (Notion #33) ✅ 2026-11-16 (#29 merged)
 
 **Durum (2026-11-16)**: Uygulandı, PR açıldı. typecheck, lint ve build temiz. Çalışan uygulamada elle denenmedi.
 
@@ -94,9 +137,7 @@ Give the task you are actively working on an `h3` heading under **In Progress** 
 - Rust tarafı değişmediği için Rust kontrolleri yalnız güvence olarak çalışır.
 - `tauri dev` içinde elle kontrol: ekle, çakışma, Space, onay, rapor, tek öğe silmenin sepeti budaması.
 
-## Up Next
-
-### Canlı tarama: biten taramayı yeniden taramadan güncel tut (FSEvents) — PLAN, onay bekliyor
+### Canlı tarama: biten taramayı yeniden taramadan güncel tut (FSEvents) ✅ 2026-11-17 (#35 merged)
 
 **Durum (2026-11-16)**: Yalnız plan. Kod yok. Yeni bağımlılık, IPC sözleşmesi ve yeni `pub` API için onay gerekiyor (aşağıda "Onay gereken değişiklikler").
 
@@ -239,7 +280,7 @@ Give the task you are actively working on an `h3` heading under **In Progress** 
      - `notify` 9.0.0-rc ikisini de düzeltiyor. Seçenek: 8.2.2'de kal ya da 9 rc'ye geç.
    - Ölçüldü: kök `/System/Volumes/Data` yazılırsa hiç olay gelmez (bu birim seçicide gizli).
    - Açık: Tam Disk Erişimi olmadan korumalı klasörlerden olay gelip gelmediği `tauri dev` altında ölçülemez (izin Terminal'e ait); paketli uygulamayla PR 4'te bakılacak.
-4. **Session + `ScanEvent::Changed` + UI tepkisi.** — PLAN, onay bekliyor (`feat/live-session`).
+4. **Session + `ScanEvent::Changed` + UI tepkisi.** ✅ 2026-11-17 (#35 merged) (`feat/live-session`).
    - **İzleyici ne zaman başlar:** tarama başlarken, `scan()` çağrısından önce. Tarama sırasında gelen değişiklikler birleştiricide birikir ve `Done` sonrasında uygulanır. Böylece uzun bir taramada erken taranan klasörlerdeki değişiklikler kaçmaz.
    - **Canlı iş parçacığı (`cleany-live-N`):** taramayla aynı ömürde.
      - Kanaldan `FsChange` alır ve `Coalescer`'a iter. `ready` olunca planı alır.
@@ -349,10 +390,6 @@ Give the task you are actively working on an `h3` heading under **In Progress** 
   - Bir klasörü komple sil; açık görünüm atasına çıkmalı.
   - ⌘R / HMR sonrası tarama yerinde olmalı.
   - Yoğun yazan bir klasörde (`cargo build` sırasında `target/`) CPU'yu izle.
-
----
-
-## Done
 
 ### M4 — Korumalı yollar listesi + silme logu (Notion #32) ✅ 2026-11-16 (#28 merged)
 
@@ -1092,3 +1129,4 @@ Parked scope — deferred work, revisit when prioritized. (CLAUDE.md → Scope D
 - **Döküm "Aç →" dokunmatikte görünmüyor** (#28 interface-check, Minor): `ui/src/screens/Summary.tsx:309` yalnızca hover/odakta görünür; Tailwind v4 `group-hover` `(hover: hover)` ile kapılı olduğundan dokunmatik ekranda tıklanabilir ama görünmez. Masaüstü uygulamasında pratik etkisi yok; dokunmatik/Linux tablet desteği gündeme gelirse `@media (hover: none)` altında sürekli göster.
 - **Canlı güncelleme firmlink kopyasına ulaşmıyor** (2026-11-17, PR 4 smoke testi; bilinen sınırlama): FSEvents yolları `/Users/...` olarak bildiriyor. `/` taramasında değişiklik Tümü › Users düğümüne işleniyor; aynı verinin System › Volumes › Data › Users kopyası eski kalıyor. Kök neden yukarıdaki çift sayım hatasıyla aynı (Data birimi iki yoldan yürünüyor); o düzeltilince (kök `/` iken `/System/Volumes/Data` atlanınca) bu da kapanır. Ayrı iş.
 - **"Güncel değil" çubuğu tek metin kullanıyor** (2026-11-17, PR 4 smoke testi, Minor): taranan birim çıkarıldığında da "Tarama sonrasında diskte çok sayıda değişiklik yapıldı" yazıyor. "Yeniden tara" var olan hata ekranına düşüyor ("cannot read scan root"), işlev doğru. Nedene göre metin (kök kayboldu / çok değişiklik) için `outdated` olayına neden alanı eklenmeli; IPC değişikliği olduğundan ayrı iş.
+- **Görünüm seçici vurgusu arka plan penceresinde güncellenmedi** (2026-11-17, #34 smoke testi, doğrulanmadı): release uygulamasında Harita ve Halka açıldığı halde "Tablo" düğmesi seçili renkte kaldı. Kod doğru (`ui/src/screens/Browse.tsx:361`, `view === v`). Pencere arka plandayken WebKit'in CSS geçişlerini (`transition-[background-color,color]`) duraklatması olası neden; CSP ile ilgisi yok. Öndeki pencerede elle kontrol edilmeli.
