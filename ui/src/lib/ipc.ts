@@ -30,6 +30,18 @@ export interface VolumeEntry {
 /** Mounted volumes, sorted by mount point. */
 export const listVolumes = () => invoke<VolumeEntry[]>('list_volumes')
 
+/** Relabels the menu bar menu in the UI's language. */
+export const setTrayLocale = (locale: 'tr' | 'en') => invoke<void>('set_tray_locale', { locale })
+
+/** Rejection value of the login item commands. */
+export type LoginItemError = { kind: 'failed'; message: string }
+
+/** Whether Cleany starts at login. */
+export const launchAtLogin = () => invoke<boolean>('launch_at_login')
+
+/** Turns starting at login on or off; resolves to the state the OS reports after. */
+export const setLaunchAtLogin = (on: boolean) => invoke<boolean>('set_launch_at_login', { on })
+
 /** Identifies one scan; a newer scan makes older ids stale. */
 export type ScanId = number
 

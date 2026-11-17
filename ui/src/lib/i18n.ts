@@ -191,6 +191,11 @@ const tr = {
   'settings.permanent': 'Kalıcı silmeyi etkinleştir',
   'settings.permanentNote':
     'Açıkken öğeleri çöpe taşımadan silebilirsiniz. Kalıcı olarak silinen öğeler geri alınamaz. Her silme işleminde onay istenir.',
+  'settings.background': 'Arka plan',
+  'settings.login': 'Oturum açıldığında başlat',
+  'settings.loginNote':
+    'Cleany menü çubuğunda açılır, son taradığınız klasörü yeniden tarar ve değişiklikleri izler. Pencereyi kapattığınızda Cleany menü çubuğunda çalışmaya devam eder.',
+  'settings.loginFailed': 'Bu ayar değiştirilemedi. Lütfen yeniden deneyin.',
   'settings.close': 'Kapat',
   'basket.label': 'Seçim sepeti',
   'basket.title': 'Sepet',
@@ -415,6 +420,11 @@ const en: Dict = {
   'settings.permanent': 'Allow permanent delete',
   'settings.permanentNote':
     'When on, you can delete items without moving them to the trash. Permanently deleted items cannot be restored. Every delete asks for confirmation.',
+  'settings.background': 'Background',
+  'settings.login': 'Open at login',
+  'settings.loginNote':
+    'Cleany opens in the menu bar, rescans the folder you scanned last and keeps track of changes. Closing the window keeps Cleany running in the menu bar.',
+  'settings.loginFailed': 'This setting could not be changed. Please try again.',
   'settings.close': 'Close',
   'basket.label': 'Selection basket',
   'basket.title': 'Basket',

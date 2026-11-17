@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import { SettingsDialog } from './components/SettingsDialog'
 import { AppIcon, Button, ChevronIcon } from './components/ui'
-import type { NodeEntry } from './lib/ipc'
+import { type NodeEntry, setTrayLocale } from './lib/ipc'
 import { BrowseView } from './screens/Browse'
 import { EndedScreen } from './screens/Ended'
 import { ScanningScreen } from './screens/Scanning'
@@ -38,6 +38,8 @@ export default function App() {
 
   useEffect(() => {
     document.documentElement.lang = locale
+    // The menu bar menu speaks the same language; outside the app there is none.
+    setTrayLocale(locale).catch(() => undefined)
   }, [locale])
 
   return (

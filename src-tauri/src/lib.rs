@@ -5,6 +5,7 @@ mod actions;
 mod deletion_log;
 mod export;
 mod session;
+mod tray;
 mod volumes;
 
 use std::path::PathBuf;
@@ -273,14 +274,57 @@ fn open_disk_access_settings() -> Result<(), AccessError> {
     access::open_settings()
 }
 
+/// Relabels the menu bar menu in the UI's language.
+#[tauri::command]
+fn set_tray_locale(app: tauri::AppHandle, locale: tray::Locale) {
+    tray::set_locale(&app, locale);
+}
+
+/// Whether Cleany starts at login.
+#[tauri::command(async)]
+fn launch_at_login(app: tauri::AppHandle) -> Result<bool, tray::LoginItemError> {
+    tray::starts_at_login(&app)
+}
+
+/// Turns starting at login on or off; returns the state the OS reports after.
+#[tauri::command(async)]
+fn set_launch_at_login(app: tauri::AppHandle, on: bool) -> Result<bool, tray::LoginItemError> {
+    tray::set_start_at_login(&app, on)
+}
+
 /// Builds and runs the Tauri application.
 ///
 /// # Panics
 /// Never by design: a startup failure is reported on stderr and the process exits non-zero.
 pub fn run() {
-    let result = tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(
+            tauri_plugin_autostart::Builder::new()
+                .args([tray::HIDDEN_ARG])
+                .build(),
+        )
         .manage(Sessions::default())
+        .setup(|app| {
+            tray::install(app.handle())?;
+            if std::env::args().any(|a| a == tray::HIDDEN_ARG)
+                && let Some(window) = app.get_webview_window(tray::MAIN_WINDOW)
+            {
+                window.hide()?;
+            }
+            Ok(())
+        })
+        .on_window_event(|window, event| {
+            // Closing keeps Cleany in the menu bar; "Quit" or Cmd+Q ends it.
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event
+                && window.label() == tray::MAIN_WINDOW
+            {
+                api.prevent_close();
+                if let Err(e) = window.hide() {
+                    eprintln!("cleany: hide window: {e}");
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             app_info,
             list_volumes,
@@ -300,11 +344,26 @@ pub fn run() {
             delete_nodes,
             export_scan,
             disk_access,
-            open_disk_access_settings
+            open_disk_access_settings,
+            set_tray_locale,
+            launch_at_login,
+            set_launch_at_login
         ])
-        .run(tauri::generate_context!());
-    if let Err(err) = result {
-        eprintln!("cleany: failed to start: {err}");
-        std::process::exit(1);
-    }
+        .build(tauri::generate_context!());
+    let app = match app {
+        Ok(app) => app,
+        Err(err) => {
+            eprintln!("cleany: failed to start: {err}");
+            std::process::exit(1);
+        }
+    };
+    app.run(|app, event| {
+        // A Dock click while the window is hidden brings it back.
+        #[cfg(target_os = "macos")]
+        if let tauri::RunEvent::Reopen { .. } = event {
+            tray::show_main(app);
+        }
+        #[cfg(not(target_os = "macos"))]
+        let _ = (app, event);
+    });
 }

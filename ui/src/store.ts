@@ -247,6 +247,39 @@ function savedTarget(summary: ScanSummary): Target {
   return { path, name: path.split('/').filter(Boolean).at(-1) ?? path }
 }
 
+const LAST_TARGET_KEY = 'cleany.lastTarget'
+
+/** Remembers the last finished scan's target, so the next launch rescans it. */
+function rememberLastTarget(target: Target) {
+  try {
+    localStorage.setItem(LAST_TARGET_KEY, JSON.stringify(target))
+  } catch {
+    // Without storage the next launch opens on the volumes.
+  }
+}
+
+/** The target the last launch finished scanning, with fresh volume figures. */
+async function lastTarget(): Promise<Target | null> {
+  let target: Target
+  try {
+    const raw = localStorage.getItem(LAST_TARGET_KEY)
+    const saved = raw ? (JSON.parse(raw) as Partial<Target>) : null
+    if (typeof saved?.path !== 'string' || typeof saved.name !== 'string') return null
+    target = { path: saved.path, name: saved.name }
+  } catch {
+    return null
+  }
+  // Used and free change between launches; a whole volume gets today's figures.
+  const volume = await listVolumes()
+    .then((list) => list.find((v) => v.mount === target.path))
+    .catch(() => undefined)
+  if (volume) {
+    target.used = Math.max(0, volume.total - volume.available)
+    target.free = volume.available
+  }
+  return target
+}
+
 const message = (error: unknown) =>
   typeof error === 'object' && error !== null && 'message' in error
     ? String((error as { message: unknown }).message)
@@ -340,6 +373,7 @@ export const useStore = create<State>()((set, get) => ({
           case 'done': {
             const done = finished(target, event.summary)
             saveTarget(event.summary.scan, target)
+            rememberLastTarget(target)
             set({ screen: done, last: done })
             void loadTop(target, event.summary)
             return
@@ -377,7 +411,14 @@ export const useStore = create<State>()((set, get) => ({
       return
     }
     // A scan started, or the user left the volumes, while the reply was on its way.
-    if (!summary || gen !== generation || get().screen.kind !== 'volumes') return
+    const idle = () => gen === generation && get().screen.kind === 'volumes'
+    if (!summary) {
+      // A fresh launch: scan the folder the last one finished, if any.
+      const target = await lastTarget()
+      if (target && idle()) await get().scan(target)
+      return
+    }
+    if (!idle()) return
     const target = savedTarget(summary)
     const done = finished(target, summary)
     set({ screen: done, last: done })
