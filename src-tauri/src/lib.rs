@@ -6,6 +6,8 @@ mod actions;
 mod app_menu;
 mod deletion_log;
 mod export;
+#[cfg(target_os = "macos")]
+mod login_item;
 mod session;
 mod tray;
 mod volumes;
@@ -345,12 +347,22 @@ pub fn run() {
         .manage(Sessions::default())
         .manage(Exports::default())
         .setup(|app| {
+            let hidden = std::env::args().any(|a| a == tray::HIDDEN_ARG);
+            #[cfg(target_os = "macos")]
+            {
+                // A hidden start while Cleany already runs is the agent's own
+                // first run after registering; the running copy stays.
+                if !login_item::claim_instance(app.handle()) && hidden {
+                    std::process::exit(0);
+                }
+                if login_item::supported() {
+                    login_item::migrate(app.handle());
+                }
+            }
             tray::install(app.handle())?;
             #[cfg(target_os = "macos")]
             app_menu::install(app.handle())?;
-            if std::env::args().any(|a| a == tray::HIDDEN_ARG)
-                && let Some(window) = app.get_webview_window(tray::MAIN_WINDOW)
-            {
+            if hidden && let Some(window) = app.get_webview_window(tray::MAIN_WINDOW) {
                 window.hide()?;
             }
             Ok(())
