@@ -29,6 +29,7 @@ The first public release of Cleany for macOS, Windows and Linux.
 - Export a scan or a single folder as CSV or JSON, with progress and the option to stop.
 - Reveal an item in Finder or your file manager, open it, copy its path, or open a terminal in that folder.
 - Cleany can keep running in the menu bar when you close the window.
+- Cleany can open at login. On macOS 13 or later, System Settings lists it under the name Cleany.
 - On macOS, Settings also opens from the app menu or with Cmd+,.
 - On macOS, Cleany guides you to grant Full Disk Access on first launch.
 - The interface is available in English and Turkish.

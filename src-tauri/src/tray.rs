@@ -159,6 +159,10 @@ pub fn set_locale<R: Runtime>(app: &AppHandle<R>, locale: Locale) {
 /// # Errors
 /// [`LoginItemError::Failed`] when the OS setting cannot be read.
 pub fn starts_at_login<R: Runtime>(app: &AppHandle<R>) -> Result<bool, LoginItemError> {
+    #[cfg(target_os = "macos")]
+    if crate::login_item::supported() {
+        return Ok(crate::login_item::is_enabled());
+    }
     app.autolaunch().is_enabled().map_err(failed)
 }
 
@@ -170,6 +174,11 @@ pub fn set_start_at_login<R: Runtime>(
     app: &AppHandle<R>,
     on: bool,
 ) -> Result<bool, LoginItemError> {
+    #[cfg(target_os = "macos")]
+    if crate::login_item::supported() {
+        crate::login_item::set_enabled(on).map_err(failed)?;
+        return Ok(crate::login_item::is_enabled());
+    }
     let manager = app.autolaunch();
     if on {
         manager.enable().map_err(failed)?;

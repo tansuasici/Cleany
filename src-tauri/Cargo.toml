@@ -24,5 +24,8 @@ tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-autostart = "2"
 tauri-plugin-dialog = "2"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+smappservice-rs = "0.1.3"
+
 [lints]
 workspace = true
