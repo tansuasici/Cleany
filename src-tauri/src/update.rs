@@ -28,6 +28,16 @@ const INSTALL_EVENT: &str = "cleany:install-update";
 /// Least time between two [`UpdateEvent::Progress`] events.
 const PROGRESS_EVERY: Duration = Duration::from_millis(150);
 
+/// Longest a check may take before it counts as failed.
+const CHECK_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Longest wait for a connection to the release server.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Longest wait for the next bytes of a download. The download as a whole has
+/// no limit, so a slow link still finishes; a stalled one fails.
+const STALL_TIMEOUT: Duration = Duration::from_secs(60);
+
 /// What the update menu item offers.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 enum MenuPhase {
@@ -157,6 +167,22 @@ fn set_phase<R: Runtime>(app: &AppHandle<R>, phase: MenuPhase) {
     }
 }
 
+/// Shows what a check is doing or found. A running install keeps its label:
+/// a check that ends during the download must not offer the update again.
+fn set_check_phase<R: Runtime>(app: &AppHandle<R>, phase: MenuPhase) {
+    if let Some(menu) = app.try_state::<UpdateMenu<R>>() {
+        menu.update(|state| state.show_check(phase));
+    }
+}
+
+impl MenuState {
+    fn show_check(&mut self, phase: MenuPhase) {
+        if self.phase != MenuPhase::Installing {
+            self.phase = phase;
+        }
+    }
+}
+
 /// The item's text, and whether it can be clicked.
 fn label(phase: &MenuPhase, locale: Locale) -> (String, bool) {
     match (phase, locale) {
@@ -262,9 +288,9 @@ pub async fn check<R: Runtime>(
     app: &AppHandle<R>,
     pending: &PendingUpdate,
 ) -> Result<Option<UpdateInfo>, UpdateError> {
-    set_phase(app, MenuPhase::Checking);
+    set_check_phase(app, MenuPhase::Checking);
     let update = find(app).await;
-    set_phase(
+    set_check_phase(
         app,
         match &update {
             Ok(Some(u)) => MenuPhase::Available {
@@ -284,8 +310,17 @@ pub async fn check<R: Runtime>(
 }
 
 async fn find<R: Runtime>(app: &AppHandle<R>) -> Result<Option<Update>, UpdateError> {
+    // The check request has its own limit; the download, which reuses this
+    // client setup, is limited only while it stalls.
     #[allow(unused_mut)]
-    let mut builder = app.updater_builder();
+    let mut builder = app
+        .updater_builder()
+        .timeout(CHECK_TIMEOUT)
+        .configure_client(|client| {
+            client
+                .connect_timeout(CONNECT_TIMEOUT)
+                .read_timeout(STALL_TIMEOUT)
+        });
     #[cfg(debug_assertions)]
     if let Some(endpoint) = std::env::var_os("CLEANY_UPDATE_ENDPOINT") {
         let url = endpoint.to_string_lossy().parse().map_err(failed)?;
@@ -416,6 +451,21 @@ mod tests {
             ("Install Cleany 0.1.2…".to_owned(), true)
         );
         assert!(!label(&MenuPhase::Installing, Locale::En).1);
+    }
+
+    #[test]
+    fn late_check_keeps_install_running() {
+        let mut state = MenuState {
+            phase: MenuPhase::Installing,
+            locale: Locale::En,
+        };
+        state.show_check(MenuPhase::Available {
+            version: "0.1.2".to_owned(),
+        });
+        assert_eq!(state.phase, MenuPhase::Installing);
+        state.phase = MenuPhase::Idle;
+        state.show_check(MenuPhase::Checking);
+        assert_eq!(state.phase, MenuPhase::Checking);
     }
 
     #[test]
