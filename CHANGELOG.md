@@ -4,10 +4,12 @@ All notable changes to Cleany are listed here. Each release on the [Releases](ht
 
 ## [Unreleased]
 
+## [0.1.1]
+
 ### Added
 - Cleany checks for a newer version when it opens. When one is available, a bar offers to install it and restart; nothing is downloaded until you choose to. The download is checked against Cleany's signing key before it is installed.
 - On Linux, the AppImage updates itself. When Cleany cannot update an install in place, the bar says where to get the new version.
-- Copies of 0.1.0 do not include this yet, so update to the next version by hand once.
+- 0.1.0 cannot update itself, so install 0.1.1 by hand once. Later versions arrive through the bar.
 
 ### Changed
 - The icons in the app now come from one consistent set, so they share the same size and line weight.
@@ -52,4 +54,5 @@ The first public release of Cleany for macOS, Windows and Linux.
 - Windows 10 and 11: `.exe` installer or `.msi`. The installer is not signed yet.
 - Linux: `.AppImage`, `.deb` or `.rpm`
 
+[0.1.1]: https://github.com/tansuasici/Cleany/releases/tag/v0.1.1
 [0.1.0]: https://github.com/tansuasici/Cleany/releases/tag/v0.1.0

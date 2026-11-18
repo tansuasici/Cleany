@@ -441,7 +441,7 @@ checksum = "1c133bc6a41be0d194c306b5506d15e6feeea7b1d6604bd3f8310dfb2ca96486"
 
 [[package]]
 name = "cleany-app"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "cleany-core",
  "cleany-platform",
@@ -457,7 +457,7 @@ dependencies = [
 
 [[package]]
 name = "cleany-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "cleany-core",
  "cleany-platform",
@@ -467,7 +467,7 @@ dependencies = [
 
 [[package]]
 name = "cleany-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "cleany-platform",
  "criterion",
@@ -479,7 +479,7 @@ dependencies = [
 
 [[package]]
 name = "cleany-platform"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "filesize",
  "notify",
