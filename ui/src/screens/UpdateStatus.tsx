@@ -17,7 +17,13 @@ type Phase =
   | { kind: 'installing' }
   | { kind: 'failed' }
 
-function startInstall(info: UpdateInfo, setPhase: (phase: Phase) => void) {
+/**
+ * Installs once: the button and the menu can both ask while a download runs,
+ * and a second request would fail and show an error over the progress.
+ */
+function startInstall(info: UpdateInfo, setPhase: (phase: Phase) => void, busy: { current: boolean }) {
+  if (busy.current) return
+  busy.current = true
   setPhase({ kind: 'downloading', info, received: 0, total: null })
   installUpdate((event) =>
     setPhase(
@@ -25,7 +31,10 @@ function startInstall(info: UpdateInfo, setPhase: (phase: Phase) => void) {
         ? { kind: 'installing' }
         : { kind: 'downloading', info, received: event.received, total: event.total },
     ),
-  ).catch(() => setPhase({ kind: 'failed' }))
+  ).catch(() => {
+    busy.current = false
+    setPhase({ kind: 'failed' })
+  })
 }
 
 /**
@@ -38,6 +47,8 @@ export function UpdateStatus() {
   const [phase, setPhase] = useState<Phase | null>(null)
   // The release the last check found, kept after "Later" for the menu item.
   const found = useRef<UpdateInfo | null>(null)
+  // True from Install until the app restarts or the install fails.
+  const installing = useRef(false)
 
   useEffect(() => {
     let live = true
@@ -45,24 +56,26 @@ export function UpdateStatus() {
     checkUpdate()
       .then((info) => {
         found.current = info
-        if (live && info) setPhase({ kind: 'available', info })
+        if (live && info && !installing.current) setPhase({ kind: 'available', info })
       })
       .catch(() => undefined)
 
     // Asked from the menu, so the result is always shown.
     const check = () => {
+      if (installing.current) return
       setPhase({ kind: 'checking' })
       Promise.all([checkUpdate(), getAppInfo()])
         .then(([info, app]) => {
           found.current = info
-          if (live) setPhase(info ? { kind: 'available', info } : { kind: 'upToDate', version: app.version })
+          if (live && !installing.current)
+            setPhase(info ? { kind: 'available', info } : { kind: 'upToDate', version: app.version })
         })
         .catch(() => live && setPhase({ kind: 'checkFailed' }))
     }
     const install = () => {
       const info = found.current
-      if (!info) return
-      if (info.canInstall) startInstall(info, setPhase)
+      if (!info || installing.current) return
+      if (info.canInstall) startInstall(info, setPhase, installing)
       else setPhase({ kind: 'available', info })
     }
     window.addEventListener(CHECK_EVENT, check)
@@ -107,7 +120,7 @@ export function UpdateStatus() {
         </div>
       )
     }
-    const install = () => startInstall(info, setPhase)
+    const install = () => startInstall(info, setPhase, installing)
     return (
       <div role="status" className={frame}>
         <p className="min-w-0 flex-1 text-secondary text-ink">{t('update.ready', { version: info.version })}</p>
