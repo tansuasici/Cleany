@@ -318,6 +318,7 @@ fn open_disk_access_settings() -> Result<(), AccessError> {
 #[tauri::command]
 fn set_tray_locale(app: tauri::AppHandle, locale: tray::Locale) {
     tray::set_locale(&app, locale);
+    update::set_locale(&app, locale);
     #[cfg(target_os = "macos")]
     app_menu::set_locale(&app, locale);
 }

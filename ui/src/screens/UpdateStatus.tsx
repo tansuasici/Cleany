@@ -1,37 +1,101 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Button } from '../components/ui'
 import { formatBytes, formatShare } from '../lib/format'
-import { checkUpdate, installUpdate, type UpdateInfo } from '../lib/ipc'
+import { checkUpdate, getAppInfo, installUpdate, type UpdateInfo } from '../lib/ipc'
 import { useT } from '../useT'
 
+/** Sent by the update item in the app menu and the menu bar menu (src-tauri/src/update.rs). */
+const CHECK_EVENT = 'cleany:check-update'
+const INSTALL_EVENT = 'cleany:install-update'
+
 type Phase =
+  | { kind: 'checking' }
+  | { kind: 'upToDate'; version: string }
+  | { kind: 'checkFailed' }
   | { kind: 'available'; info: UpdateInfo }
   | { kind: 'downloading'; info: UpdateInfo; received: number; total: number | null }
   | { kind: 'installing' }
   | { kind: 'failed' }
 
+function startInstall(info: UpdateInfo, setPhase: (phase: Phase) => void) {
+  setPhase({ kind: 'downloading', info, received: 0, total: null })
+  installUpdate((event) =>
+    setPhase(
+      event.kind === 'installing'
+        ? { kind: 'installing' }
+        : { kind: 'downloading', info, received: event.received, total: event.total },
+    ),
+  ).catch(() => setPhase({ kind: 'failed' }))
+}
+
 /**
  * A newer release, above every screen. Cleany checks once at launch and
  * installs only when the user asks; "Later" hides the bar until next launch.
+ * The update item in the menus checks again, or installs what was found.
  */
 export function UpdateStatus() {
   const { t, locale } = useT()
   const [phase, setPhase] = useState<Phase | null>(null)
+  // The release the last check found, kept after "Later" for the menu item.
+  const found = useRef<UpdateInfo | null>(null)
 
   useEffect(() => {
     let live = true
     // Offline, or no release yet: say nothing.
     checkUpdate()
-      .then((info) => live && info && setPhase({ kind: 'available', info }))
+      .then((info) => {
+        found.current = info
+        if (live && info) setPhase({ kind: 'available', info })
+      })
       .catch(() => undefined)
+
+    // Asked from the menu, so the result is always shown.
+    const check = () => {
+      setPhase({ kind: 'checking' })
+      Promise.all([checkUpdate(), getAppInfo()])
+        .then(([info, app]) => {
+          found.current = info
+          if (live) setPhase(info ? { kind: 'available', info } : { kind: 'upToDate', version: app.version })
+        })
+        .catch(() => live && setPhase({ kind: 'checkFailed' }))
+    }
+    const install = () => {
+      const info = found.current
+      if (!info) return
+      if (info.canInstall) startInstall(info, setPhase)
+      else setPhase({ kind: 'available', info })
+    }
+    window.addEventListener(CHECK_EVENT, check)
+    window.addEventListener(INSTALL_EVENT, install)
     return () => {
       live = false
+      window.removeEventListener(CHECK_EVENT, check)
+      window.removeEventListener(INSTALL_EVENT, install)
     }
   }, [])
 
   if (!phase) return null
   const frame = 'mx-4 mt-4 flex shrink-0 items-center gap-3 rounded-card bg-raised py-2 pr-2 pl-4 enter-fade max-sm:mx-3'
   const dismiss = () => setPhase(null)
+
+  if (phase.kind === 'checking') {
+    return (
+      <div role="status" className={frame}>
+        <p className="min-w-0 flex-1 py-1.5 text-secondary text-ink">{t('update.checking')}</p>
+      </div>
+    )
+  }
+
+  if (phase.kind === 'upToDate' || phase.kind === 'checkFailed') {
+    return (
+      <div role="status" className={frame}>
+        <p className="min-w-0 flex-1 text-secondary text-ink">
+          {phase.kind === 'upToDate' ? t('update.upToDate', { version: phase.version }) : t('update.checkFailed')}
+        </p>
+        <Button onClick={dismiss}>{t('update.close')}</Button>
+      </div>
+    )
+  }
 
   if (phase.kind === 'available') {
     const { info } = phase
@@ -43,16 +107,7 @@ export function UpdateStatus() {
         </div>
       )
     }
-    const install = () => {
-      setPhase({ kind: 'downloading', info, received: 0, total: null })
-      installUpdate((event) =>
-        setPhase(
-          event.kind === 'installing'
-            ? { kind: 'installing' }
-            : { kind: 'downloading', info, received: event.received, total: event.total },
-        ),
-      ).catch(() => setPhase({ kind: 'failed' }))
-    }
+    const install = () => startInstall(info, setPhase)
     return (
       <div role="status" className={frame}>
         <p className="min-w-0 flex-1 text-secondary text-ink">{t('update.ready', { version: info.version })}</p>
