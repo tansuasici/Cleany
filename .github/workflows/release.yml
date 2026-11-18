@@ -7,7 +7,8 @@
 #   git tag v0.1.0 && git push origin v0.1.0
 # or run it from the Actions tab with an existing tag.
 #
-# macOS is signed and notarized when these repository secrets are set:
+# macOS is signed and notarized (the app and the disk image around it) when
+# these repository secrets are set:
 #   APPLE_CERTIFICATE           base64 of the Developer ID Application .p12
 #   APPLE_CERTIFICATE_PASSWORD  password of that .p12
 #   APPLE_SIGNING_IDENTITY      "Developer ID Application: <name> (<team id>)"
@@ -133,6 +134,27 @@ jobs:
             echo "::warning::Apple secrets are not set, the macOS build is not signed or notarized"
           fi
           pnpm --dir ui tauri build ${{ matrix.args }}
+      # Tauri notarizes Cleany.app but not the disk image around it, and
+      # Gatekeeper rejects a signed disk image that is not notarized.
+      - name: Notarize the disk image
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ -z "$APPLE_ID" ] || [ -z "$APPLE_PASSWORD" ] || [ -z "$APPLE_TEAM_ID" ]; then
+            echo "::warning::Apple secrets are not set, the disk image is not notarized"
+            exit 0
+          fi
+          shopt -s nullglob
+          for dmg in "${{ matrix.bundle }}"/dmg/*.dmg; do
+            xcrun notarytool submit "$dmg" --wait \
+              --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID"
+            xcrun stapler staple "$dmg"
+            spctl -a -vv -t open --context context:primary-signature "$dmg"
+          done
       - name: Upload to the draft release
         shell: bash
         run: |

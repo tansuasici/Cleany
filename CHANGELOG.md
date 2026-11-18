@@ -2,6 +2,11 @@
 
 All notable changes to Cleany are listed here. Each release on the [Releases](https://github.com/tansuasici/Cleany/releases) page uses the notes for its version from this file.
 
+## [Unreleased]
+
+### Other
+- The macOS disk image is notarized as well, so macOS checks it without a warning before you open it.
+
 ## [0.1.0]
 
 The first public release of Cleany for macOS, Windows and Linux.
