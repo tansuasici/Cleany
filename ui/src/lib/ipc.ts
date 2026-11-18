@@ -1,7 +1,8 @@
 import { Channel, invoke } from '@tauri-apps/api/core'
 
 // Hand-written mirror of the serialized types in src-tauri/src/lib.rs,
-// src-tauri/src/session.rs, src-tauri/src/volumes.rs, src-tauri/src/access.rs
+// src-tauri/src/session.rs, src-tauri/src/volumes.rs, src-tauri/src/access.rs,
+// src-tauri/src/update.rs
 // and src-tauri/src/actions.rs. The `ipc_ts_mentions_every_serialized_key`,
 // `ipc_ts_mentions_every_volume_key`, `ipc_ts_mentions_every_access_tag` and
 // `ipc_ts_mentions_every_action_tag` Rust tests fail when a key or tag here
@@ -41,6 +42,30 @@ export const launchAtLogin = () => invoke<boolean>('launch_at_login')
 
 /** Turns starting at login on or off; resolves to the state the OS reports after. */
 export const setLaunchAtLogin = (on: boolean) => invoke<boolean>('set_launch_at_login', { on })
+
+/** A newer release on GitHub. Mirrors `UpdateInfo` in src-tauri/src/update.rs. */
+export interface UpdateInfo {
+  version: string
+  currentVersion: string
+  /** False when this copy came from a package the update cannot replace. */
+  canInstall: boolean
+}
+
+/** Download progress while an update installs. */
+export type UpdateEvent = { kind: 'progress'; received: number; total: number | null } | { kind: 'installing' }
+
+/** Rejection value of the update commands. */
+export type UpdateError = { kind: 'failed'; message: string } | { kind: 'nothingPending' }
+
+/** Looks for a newer release; `null` when this copy is current. */
+export const checkUpdate = () => invoke<UpdateInfo | null>('check_update')
+
+/** Downloads and installs the update `checkUpdate` found, then restarts Cleany. */
+export function installUpdate(onEvent: (event: UpdateEvent) => void) {
+  const channel = new Channel<UpdateEvent>()
+  channel.onmessage = onEvent
+  return invoke<void>('install_update', { onEvent: channel })
+}
 
 /** Identifies one scan; a newer scan makes older ids stale. */
 export type ScanId = number

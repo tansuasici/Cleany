@@ -16,6 +16,14 @@
 #   APPLE_PASSWORD              app-specific password for that Apple ID
 #   APPLE_TEAM_ID               team id
 # Windows and Linux builds are unsigned.
+#
+# Automatic updates (ADR-0011) need the updater signing key as secrets:
+#   TAURI_SIGNING_PRIVATE_KEY           contents of the key from `tauri signer generate`
+#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD  its password
+# With them, each build also signs its update bundle and the last job publishes
+# latest.json, which installed copies read through
+# releases/latest/download/latest.json once the draft is published. Its public
+# key is plugins.updater.pubkey in src-tauri/tauri.conf.json.
 
 name: Release
 
@@ -125,6 +133,8 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           # An empty variable would make the Tauri CLI try to sign with nothing.
           for v in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
@@ -133,7 +143,14 @@ jobs:
           if [ "$RUNNER_OS" = "macOS" ] && [ -z "${APPLE_CERTIFICATE:-}" ]; then
             echo "::warning::Apple secrets are not set, the macOS build is not signed or notarized"
           fi
-          pnpm --dir ui tauri build ${{ matrix.args }}
+          updater=()
+          if [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
+            updater=(--config '{"bundle":{"createUpdaterArtifacts":true}}')
+          else
+            unset TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+            echo "::warning::Updater signing key is not set, this release offers no automatic update"
+          fi
+          pnpm --dir ui tauri build ${{ matrix.args }} "${updater[@]}"
       # Tauri notarizes Cleany.app but not the disk image around it, and
       # Gatekeeper rejects a signed disk image that is not notarized.
       - name: Notarize the disk image
@@ -161,9 +178,51 @@ jobs:
           shopt -s nullglob
           dir="${{ matrix.bundle }}"
           files=("$dir"/dmg/*.dmg "$dir"/nsis/*.exe "$dir"/msi/*.msi "$dir"/appimage/*.AppImage "$dir"/deb/*.deb "$dir"/rpm/*.rpm)
+          # Update bundles and their signatures, when the signing key is set.
+          files+=("$dir"/macos/*.app.tar.gz "$dir"/*/*.sig)
           if [ ${#files[@]} -eq 0 ]; then
             echo "::error::No installers found under $dir"
             exit 1
           fi
           printf '%s\n' "${files[@]}"
           gh release upload "$TAG" "${files[@]}" --clobber
+
+  updater:
+    name: Publish latest.json
+    needs: build
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Write latest.json from the signatures
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/sigs" && cd "$RUNNER_TEMP/sigs"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern '*.sig' || true
+          shopt -s nullglob
+          sigs=(*.sig)
+          if [ ${#sigs[@]} -eq 0 ]; then
+            echo "::warning::No update signatures in $TAG, latest.json is not published"
+            exit 0
+          fi
+          base="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG"
+          platforms='{}'
+          add() { # add <key> <asset>
+            platforms=$(jq --arg k "$1" --arg u "$base/$2" --rawfile s "$2.sig" \
+              '. + {($k): {url: $u, signature: ($s | rtrimstr("\n"))}}' <<<"$platforms")
+          }
+          for sig in "${sigs[@]}"; do
+            asset="${sig%.sig}"
+            case "$asset" in
+              *.app.tar.gz)
+                for k in darwin-aarch64 darwin-x86_64 darwin-aarch64-app darwin-x86_64-app; do add "$k" "$asset"; done ;;
+              *-setup.exe) add windows-x86_64 "$asset"; add windows-x86_64-nsis "$asset" ;;
+              *.msi) add windows-x86_64-msi "$asset" ;;
+              *.AppImage) add linux-x86_64 "$asset"; add linux-x86_64-appimage "$asset" ;;
+              *.deb) add linux-x86_64-deb "$asset" ;;
+              *.rpm) add linux-x86_64-rpm "$asset" ;;
+              *) echo "::warning::Unknown signed asset $asset" ;;
+            esac
+          done
+          jq -n --arg v "${TAG#v}" --arg d "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson p "$platforms" \
+            '{version: $v, pub_date: $d, platforms: $p}' > latest.json
+          cat latest.json
+          gh release upload "$TAG" latest.json --repo "$GITHUB_REPOSITORY" --clobber

@@ -4,6 +4,11 @@ All notable changes to Cleany are listed here. Each release on the [Releases](ht
 
 ## [Unreleased]
 
+### Added
+- Cleany checks for a newer version when it opens. When one is available, a bar offers to install it and restart; nothing is downloaded until you choose to. The download is checked against Cleany's signing key before it is installed.
+- On Linux, the AppImage updates itself. When Cleany cannot update an install in place, the bar says where to get the new version.
+- Copies of 0.1.0 do not include this yet, so update to the next version by hand once.
+
 ### Other
 - The macOS disk image is notarized as well, so macOS checks it without a warning before you open it.
 
