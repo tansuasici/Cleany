@@ -9,6 +9,9 @@ All notable changes to Cleany are listed here. Each release on the [Releases](ht
 - On Linux, the AppImage updates itself. When Cleany cannot update an install in place, the bar says where to get the new version.
 - Copies of 0.1.0 do not include this yet, so update to the next version by hand once.
 
+### Changed
+- The icons in the app now come from one consistent set, so they share the same size and line weight.
+
 ### Other
 - The macOS disk image is notarized as well, so macOS checks it without a warning before you open it.
 
