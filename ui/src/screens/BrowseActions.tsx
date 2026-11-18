@@ -184,15 +184,10 @@ function TrashConfirm({
   onCancel: () => void
   onConfirm: () => void
 }) {
-  const { t, locale } = useT()
+  const { t } = useT()
   const ref = useRef<HTMLDialogElement>(null)
   const titleId = useId()
   const detailId = useId()
-  const wordId = useId()
-  const [typed, setTyped] = useState('')
-  const word = t('delete.word')
-  // A permanent delete waits for the word typed out; a move to the trash does not.
-  const ready = removal === 'trash' || typed.trim().toLocaleLowerCase(locale) === word
 
   useEffect(() => {
     const dialog = ref.current
@@ -228,36 +223,16 @@ function TrashConfirm({
       <form
         onSubmit={(e) => {
           e.preventDefault()
-          if (ready && !working) onConfirm()
+          if (!working) onConfirm()
         }}
       >
-        {removal === 'delete' && (
-          <div className="mt-4 flex flex-col gap-1">
-            <label htmlFor={wordId} className="text-body text-ink">
-              {t('delete.prompt', { word })}
-            </label>
-            {/* Focus lands here: typing is the way forward, Escape the way out. */}
-            <input
-              id={wordId}
-              value={typed}
-              onChange={(e) => setTyped(e.target.value)}
-              disabled={working}
-              autoFocus
-              autoComplete="off"
-              autoCapitalize="off"
-              autoCorrect="off"
-              spellCheck={false}
-              className="h-8 rounded-control border border-edge bg-card px-2 text-body text-ink"
-            />
-          </div>
-        )}
         <div className="mt-6 flex flex-wrap justify-end gap-2">
           {/* First in the dialog, so focus lands on the safe choice. */}
-          <Button type="button" onClick={onCancel} disabled={working} autoFocus={removal === 'trash'}>
+          <Button type="button" onClick={onCancel} disabled={working} autoFocus>
             {t('trash.cancel')}
             <Kbd>Esc</Kbd>
           </Button>
-          <Button type="submit" variant="primary" disabled={working || !ready} aria-busy={working}>
+          <Button type="submit" variant="primary" disabled={working} aria-busy={working}>
             {removal === 'trash'
               ? working
                 ? t('trash.working')

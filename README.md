@@ -26,7 +26,7 @@ When your disk fills up, the real question is where the space went. Cleany scans
 
 **Collect first, then clean.** Add what you want to remove to the selection basket and see how much space it will free before you do anything.
 
-**Clean up safely.** Items go to the Trash first, so you can restore them if you change your mind. Folders that belong to the operating system are protected and cannot be removed. Every removal is written to a log file on your computer. Permanent deletion is optional, turned on in Settings, and asks you to type a confirmation each time.
+**Clean up safely.** Items go to the Trash first, so you can restore them if you change your mind. Folders that belong to the operating system are protected and cannot be removed. Every removal is written to a log file on your computer. Permanent deletion is optional, turned on in Settings, and asks for confirmation each time.
 
 **Numbers you can trust.** Hard links are counted once. Cloud files that are only placeholders take no space on disk, so they are not added to the total. On macOS, system folders that appear in two places are counted once.
 
