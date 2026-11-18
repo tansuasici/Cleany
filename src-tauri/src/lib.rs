@@ -10,6 +10,7 @@ mod export;
 mod login_item;
 mod session;
 mod tray;
+mod update;
 mod volumes;
 
 use std::path::PathBuf;
@@ -27,6 +28,7 @@ use session::{
     ScanSummary, SessionError, Sessions, SortKey, SortOrder, SunburstSlice, TrashReport,
     TreemapSlice,
 };
+use update::{PendingUpdate, UpdateError, UpdateEvent, UpdateInfo};
 use volumes::VolumeEntry;
 
 /// Basic build/runtime info shown in the UI shell. Mirrors `AppInfo` in `ui/src/lib/ipc.ts`.
@@ -332,6 +334,26 @@ fn set_launch_at_login(app: tauri::AppHandle, on: bool) -> Result<bool, tray::Lo
     tray::set_start_at_login(&app, on)
 }
 
+/// Looks for a newer release on GitHub. `None` when this copy is current.
+#[tauri::command]
+async fn check_update(
+    app: tauri::AppHandle,
+    pending: tauri::State<'_, PendingUpdate>,
+) -> Result<Option<UpdateInfo>, UpdateError> {
+    update::check(&app, &pending).await
+}
+
+/// Downloads and installs the update found by `check_update`, then restarts.
+/// Progress arrives on `on_event`.
+#[tauri::command]
+async fn install_update(
+    app: tauri::AppHandle,
+    pending: tauri::State<'_, PendingUpdate>,
+    on_event: Channel<UpdateEvent>,
+) -> Result<(), UpdateError> {
+    update::install(&app, pending, on_event).await
+}
+
 /// Builds and runs the Tauri application.
 ///
 /// # Panics
@@ -344,7 +366,9 @@ pub fn run() {
                 .args([tray::HIDDEN_ARG])
                 .build(),
         )
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(Sessions::default())
+        .manage(PendingUpdate::default())
         .manage(Exports::default())
         .setup(|app| {
             let hidden = std::env::args().any(|a| a == tray::HIDDEN_ARG);
@@ -402,7 +426,9 @@ pub fn run() {
             open_disk_access_settings,
             set_tray_locale,
             launch_at_login,
-            set_launch_at_login
+            set_launch_at_login,
+            check_update,
+            install_update
         ])
         .build(tauri::generate_context!());
     let app = match app {

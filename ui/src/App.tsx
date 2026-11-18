@@ -11,6 +11,7 @@ import { type BrowseScreen, type Screen, useStore } from './store'
 import { useT } from './useT'
 import { useTrail } from './useTrail'
 import { ExportStatus } from './screens/ExportStatus'
+import { UpdateStatus } from './screens/UpdateStatus'
 
 export default function App() {
   const { t, locale } = useT()
@@ -65,6 +66,7 @@ export default function App() {
       </header>
 
       <main className="flex min-h-0 flex-1 flex-col overflow-auto [scrollbar-gutter:stable]">
+        <UpdateStatus />
         <Outdated screen={screen} />
         <ExportStatus />
         {/* Keyed by kind: a new screen enters once, moving between folders does not. */}
