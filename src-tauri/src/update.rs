@@ -67,19 +67,34 @@ impl<R: Runtime> Default for UpdateMenu<R> {
 }
 
 impl<R: Runtime> UpdateMenu<R> {
+    /// Changes the state, then relabels the items on the main thread.
+    ///
+    /// `set_text` off the main thread waits for the main thread, so no lock may
+    /// be held across it: the main thread can be waiting for that same lock
+    /// (the UI's locale change), and both would stop. The relabel reads the
+    /// state when it runs, so the last change wins whatever the order.
     fn update(&self, change: impl FnOnce(&mut MenuState)) {
-        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        change(&mut state);
-        let (text, enabled) = label(&state.phase, state.locale);
-        for item in self
+        change(&mut self.state.lock().unwrap_or_else(PoisonError::into_inner));
+        let items = self
             .items
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .iter()
-        {
-            report_menu(item.set_text(&text));
-            report_menu(item.set_enabled(enabled));
-        }
+            .clone();
+        let Some(app) = items.first().map(|item| item.app_handle().clone()) else {
+            return;
+        };
+        let relabel = app.clone();
+        report_menu(app.run_on_main_thread(move || {
+            let menu = relabel.state::<UpdateMenu<R>>();
+            let (text, enabled) = {
+                let state = menu.state.lock().unwrap_or_else(PoisonError::into_inner);
+                label(&state.phase, state.locale)
+            };
+            for item in &items {
+                report_menu(item.set_text(&text));
+                report_menu(item.set_enabled(enabled));
+            }
+        }));
     }
 }
 
