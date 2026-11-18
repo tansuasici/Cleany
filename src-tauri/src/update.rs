@@ -25,6 +25,10 @@ const CHECK_EVENT: &str = "cleany:check-update";
 /// The DOM event that asks the UI to install the update it found.
 const INSTALL_EVENT: &str = "cleany:install-update";
 
+/// Where a menu request waits on `window` until the UI handles it, so a click
+/// made before the UI has loaded is not lost.
+const REQUEST_KEY: &str = "cleanyUpdateRequest";
+
 /// Least time between two [`UpdateEvent::Progress`] events.
 const PROGRESS_EVERY: Duration = Duration::from_millis(150);
 
@@ -95,7 +99,9 @@ impl<R: Runtime> UpdateMenu<R> {
         };
         let relabel = app.clone();
         report_menu(app.run_on_main_thread(move || {
-            let menu = relabel.state::<UpdateMenu<R>>();
+            let Some(menu) = relabel.try_state::<UpdateMenu<R>>() else {
+                return;
+            };
             let (text, enabled) = {
                 let state = menu.state.lock().unwrap_or_else(PoisonError::into_inner);
                 label(&state.phase, state.locale)
@@ -155,7 +161,9 @@ pub fn on_menu_click<R: Runtime>(app: &AppHandle<R>) {
     };
     tray::show_main(app);
     if let Some(window) = app.get_webview_window(tray::MAIN_WINDOW)
-        && let Err(e) = window.eval(format!("window.dispatchEvent(new Event('{event}'))"))
+        && let Err(e) = window.eval(format!(
+            "window.{REQUEST_KEY} = '{event}'; window.dispatchEvent(new Event('{event}'))"
+        ))
     {
         eprintln!("cleany: update menu: {e}");
     }
@@ -289,17 +297,25 @@ pub async fn check<R: Runtime>(
     pending: &PendingUpdate,
 ) -> Result<Option<UpdateInfo>, UpdateError> {
     set_check_phase(app, MenuPhase::Checking);
-    let update = find(app).await;
+    // The update is kept before the menu offers it, so a click on the item
+    // always finds something to install.
+    let found = find(app).await.and_then(|update| keep(pending, update));
     set_check_phase(
         app,
-        match &update {
-            Ok(Some(u)) => MenuPhase::Available {
-                version: u.version.clone(),
+        match &found {
+            Ok(Some(info)) => MenuPhase::Available {
+                version: info.version.clone(),
             },
             Ok(None) | Err(_) => MenuPhase::Idle,
         },
     );
-    let update = update?;
+    found
+}
+
+fn keep(
+    pending: &PendingUpdate,
+    update: Option<Update>,
+) -> Result<Option<UpdateInfo>, UpdateError> {
     let info = update.as_ref().map(|u| UpdateInfo {
         version: u.version.clone(),
         current_version: u.current_version.clone(),
@@ -478,6 +494,10 @@ mod tests {
         assert!(
             ui.contains(INSTALL_EVENT),
             "UpdateStatus.tsx misses {INSTALL_EVENT}"
+        );
+        assert!(
+            ui.contains(REQUEST_KEY),
+            "UpdateStatus.tsx misses {REQUEST_KEY}"
         );
     }
 
