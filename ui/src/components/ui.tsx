@@ -1,31 +1,26 @@
+import {
+  Check,
+  ChevronRight,
+  Copy,
+  Eject,
+  FolderSearch,
+  HardDrive,
+  Settings,
+  ShoppingBasket,
+  SquareArrowOutUpRight,
+  SquareTerminal,
+  Trash2,
+} from 'lucide-react'
 import { type ComponentProps, type KeyboardEvent, type PointerEvent, type ReactNode, useRef, useState } from 'react'
 
-// Shared pieces of the döküm direction (ui/DESIGN_MAP.md). Icons are 16px,
-// 1.5 stroke, drawn inline; no icon set.
+// Shared pieces of the döküm direction (ui/DESIGN_MAP.md). Icons come from
+// lucide-react at 16px with a 1.5 stroke; only the app icon is drawn here.
 
-const iconProps = {
-  width: 16,
-  height: 16,
-  viewBox: '0 0 16 16',
-  fill: 'none',
-  stroke: 'currentColor',
-  strokeWidth: 1.5,
-  strokeLinecap: 'round' as const,
-  strokeLinejoin: 'round' as const,
-  'aria-hidden': true,
-}
+const iconProps = { size: 16, strokeWidth: 1.5, 'aria-hidden': true } as const
 
-export const ChevronIcon = () => (
-  <svg {...iconProps}>
-    <path d="M6 3.5 10.5 8 6 12.5" />
-  </svg>
-)
+export const ChevronIcon = () => <ChevronRight {...iconProps} />
 
-export const CheckIcon = () => (
-  <svg {...iconProps}>
-    <path d="M3.5 8.5 6.5 11.5 12.5 4.5" />
-  </svg>
-)
+export const CheckIcon = () => <Check {...iconProps} />
 
 /**
  * The app icon as the macOS Dock shows it (`assets/icon-macos.svg` without
@@ -43,71 +38,25 @@ export const AppIcon = ({ size = 28 }: { size?: number }) => (
   </svg>
 )
 
-export const VolumeIcon = () => (
-  <svg {...iconProps}>
-    <rect x="1.75" y="4.25" width="12.5" height="7.5" rx="1.5" />
-    <path d="M4.5 9h3" />
-    <circle cx="11.5" cy="9" r=".5" fill="currentColor" stroke="none" />
-  </svg>
-)
+export const VolumeIcon = () => <HardDrive {...iconProps} />
 
-export const RemovableIcon = () => (
-  <svg {...iconProps}>
-    <path d="M8 2.5 3.5 8h9L8 2.5Z" />
-    <path d="M3.5 11.5h9" />
-  </svg>
-)
+export const RemovableIcon = () => <Eject {...iconProps} />
 
-/** Show in the file manager: a folder with a dot of focus on it. */
-export const RevealIcon = () => (
-  <svg {...iconProps}>
-    <path d="M1.75 4.25a1 1 0 0 1 1-1h3l1.5 1.5h6a1 1 0 0 1 1 1v6.5a1 1 0 0 1-1 1H2.75a1 1 0 0 1-1-1Z" />
-    <circle cx="8" cy="9" r="1.5" />
-  </svg>
-)
+/** Show in the file manager. */
+export const RevealIcon = () => <FolderSearch {...iconProps} />
 
-/** Open in its own app: an arrow leaving its box. */
-export const OpenIcon = () => (
-  <svg {...iconProps}>
-    <path d="M7 3H3.75a1 1 0 0 0-1 1v8.25a1 1 0 0 0 1 1H12a1 1 0 0 0 1-1V9" />
-    <path d="M9.5 2.75h3.75V6.5M13 3 7.5 8.5" />
-  </svg>
-)
+/** Open in its own app. */
+export const OpenIcon = () => <SquareArrowOutUpRight {...iconProps} />
 
-export const CopyIcon = () => (
-  <svg {...iconProps}>
-    <rect x="5.25" y="5.25" width="8.5" height="8.5" rx="1.5" />
-    <path d="M10.75 5V3.75a1.5 1.5 0 0 0-1.5-1.5h-5.5a1.5 1.5 0 0 0-1.5 1.5v5.5a1.5 1.5 0 0 0 1.5 1.5H5" />
-  </svg>
-)
+export const CopyIcon = () => <Copy {...iconProps} />
 
-export const TerminalIcon = () => (
-  <svg {...iconProps}>
-    <rect x="2" y="2.75" width="12" height="10.5" rx="1.5" />
-    <path d="m4.75 6.25 2 1.75-2 1.75M8.5 10h2.75" />
-  </svg>
-)
+export const TerminalIcon = () => <SquareTerminal {...iconProps} />
 
-export const BasketIcon = () => (
-  <svg {...iconProps}>
-    <path d="M2 6.25h12l-1.25 6.5a1 1 0 0 1-1 .75h-7.5a1 1 0 0 1-1-.75Z" />
-    <path d="M5.5 6.25 7 2.5M10.5 6.25 9 2.5" />
-  </svg>
-)
+export const BasketIcon = () => <ShoppingBasket {...iconProps} />
 
-export const TrashIcon = () => (
-  <svg {...iconProps}>
-    <path d="M2.5 4.25h11M6.25 4.25V2.75h3.5v1.5" />
-    <path d="M3.75 4.25 4.5 13a1 1 0 0 0 1 .75h5a1 1 0 0 0 1-.75l.75-8.75" />
-  </svg>
-)
+export const TrashIcon = () => <Trash2 {...iconProps} />
 
-export const GearIcon = () => (
-  <svg {...iconProps}>
-    <path d="M6.55 3.32 6.58 1.66 9.42 1.66 9.45 3.32 10.29 3.67 11.48 2.51 13.49 4.52 12.33 5.71 12.68 6.55 14.34 6.58 14.34 9.42 12.68 9.45 12.33 10.29 13.49 11.48 11.48 13.49 10.29 12.33 9.45 12.68 9.42 14.34 6.58 14.34 6.55 12.68 5.71 12.33 4.52 13.49 2.51 11.48 3.67 10.29 3.32 9.45 1.66 9.42 1.66 6.58 3.32 6.55 3.67 5.71 2.51 4.52 4.52 2.51 5.71 3.67Z" />
-    <circle cx="8" cy="8" r="2" />
-  </svg>
-)
+export const GearIcon = () => <Settings {...iconProps} />
 
 type ButtonProps = ComponentProps<'button'> & { variant?: 'primary' | 'secondary' }
 
