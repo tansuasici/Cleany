@@ -7,6 +7,14 @@ import { useT } from '../useT'
 /** Sent by the update item in the app menu and the menu bar menu (src-tauri/src/update.rs). */
 const CHECK_EVENT = 'cleany:check-update'
 const INSTALL_EVENT = 'cleany:install-update'
+/** Where the menu leaves its last request, for when this screen was not listening yet. */
+const REQUEST_KEY = 'cleanyUpdateRequest'
+
+declare global {
+  interface Window {
+    [REQUEST_KEY]?: string
+  }
+}
 
 type Phase =
   | { kind: 'checking' }
@@ -52,16 +60,17 @@ export function UpdateStatus() {
 
   useEffect(() => {
     let live = true
-    // Offline, or no release yet: say nothing.
-    checkUpdate()
-      .then((info) => {
-        found.current = info
-        if (live && info && !installing.current) setPhase({ kind: 'available', info })
-      })
-      .catch(() => undefined)
+    // A menu click made before this screen listened, waiting on window.
+    const asked = window[REQUEST_KEY]
+    delete window[REQUEST_KEY]
 
+    const offerInstall = (info: UpdateInfo) => {
+      if (info.canInstall) startInstall(info, setPhase, installing)
+      else setPhase({ kind: 'available', info })
+    }
     // Asked from the menu, so the result is always shown.
     const check = () => {
+      delete window[REQUEST_KEY]
       if (installing.current) return
       setPhase({ kind: 'checking' })
       Promise.all([checkUpdate(), getAppInfo()])
@@ -73,17 +82,44 @@ export function UpdateStatus() {
         .catch(() => live && setPhase({ kind: 'checkFailed' }))
     }
     const install = () => {
-      const info = found.current
-      if (!info || installing.current) return
-      if (info.canInstall) startInstall(info, setPhase, installing)
-      else setPhase({ kind: 'available', info })
+      delete window[REQUEST_KEY]
+      if (installing.current) return
+      if (found.current) {
+        offerInstall(found.current)
+        return
+      }
+      // The menu offered a release this screen has not heard of yet.
+      setPhase({ kind: 'checking' })
+      checkUpdate()
+        .then((info) => {
+          found.current = info
+          if (!live || installing.current) return
+          if (info) offerInstall(info)
+          else setPhase(null)
+        })
+        .catch(() => live && setPhase({ kind: 'checkFailed' }))
     }
+
+    if (asked === CHECK_EVENT) check()
+    else if (asked === INSTALL_EVENT) install()
+    else {
+      // Offline, or no release yet: say nothing.
+      checkUpdate()
+        .then((info) => {
+          found.current = info
+          if (live && info && !installing.current) setPhase({ kind: 'available', info })
+        })
+        .catch(() => undefined)
+    }
+
     window.addEventListener(CHECK_EVENT, check)
     window.addEventListener(INSTALL_EVENT, install)
     return () => {
       live = false
       window.removeEventListener(CHECK_EVENT, check)
       window.removeEventListener(INSTALL_EVENT, install)
+      // A remount (React's development double run) answers it again.
+      if (asked) window[REQUEST_KEY] ??= asked
     }
   }, [])
 
