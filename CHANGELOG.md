@@ -4,8 +4,13 @@ All notable changes to Cleany are listed here. Each release on the [Releases](ht
 
 ## [Unreleased]
 
+## [0.1.2]
+
 ### Added
 - Check for Updates in the Cleany menu on macOS and in the menu bar menu. When a newer version is found, the item changes to install that version, and clicking it starts the download.
+
+### Other
+- This is the first version that 0.1.1 can install by itself: open Cleany 0.1.1 and choose Install and restart in the update bar.
 
 ## [0.1.1]
 
@@ -57,5 +62,6 @@ The first public release of Cleany for macOS, Windows and Linux.
 - Windows 10 and 11: `.exe` installer or `.msi`. The installer is not signed yet.
 - Linux: `.AppImage`, `.deb` or `.rpm`
 
+[0.1.2]: https://github.com/tansuasici/Cleany/releases/tag/v0.1.2
 [0.1.1]: https://github.com/tansuasici/Cleany/releases/tag/v0.1.1
 [0.1.0]: https://github.com/tansuasici/Cleany/releases/tag/v0.1.0
