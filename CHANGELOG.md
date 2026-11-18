@@ -4,6 +4,9 @@ All notable changes to Cleany are listed here. Each release on the [Releases](ht
 
 ## [Unreleased]
 
+### Added
+- Check for Updates in the Cleany menu on macOS and in the menu bar menu. When a newer version is found, the item changes to install that version, and clicking it starts the download.
+
 ## [0.1.1]
 
 ### Added

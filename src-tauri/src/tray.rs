@@ -96,8 +96,13 @@ pub fn install<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     let free = MenuItem::with_id(app, "free", "", false, None::<&str>)?;
     let show = MenuItem::with_id(app, "show", "", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "", true, None::<&str>)?;
+    let update = crate::update::menu_item(app)?;
     let separator = PredefinedMenuItem::separator(app)?;
-    let menu = Menu::with_items(app, &[&free, &separator, &show, &quit])?;
+    let update_separator = PredefinedMenuItem::separator(app)?;
+    let menu = Menu::with_items(
+        app,
+        &[&free, &separator, &update, &update_separator, &show, &quit],
+    )?;
 
     TrayIconBuilder::with_id("main")
         .icon(Image::from_bytes(include_bytes!(
@@ -110,6 +115,8 @@ pub fn install<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
         .on_menu_event(|app, event| match event.id().as_ref() {
             "show" => show_main(app),
             "quit" => app.exit(0),
+            // Also the app menu's update item: this handler sees every menu event.
+            crate::update::MENU_ID => crate::update::on_menu_click(app),
             _ => {}
         })
         .build(app)?;

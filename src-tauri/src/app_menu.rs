@@ -1,10 +1,12 @@
-//! The macOS app menu: the standard items plus "Settings…" (Cmd+,), which
-//! brings the window forward and opens the Settings dialog.
+//! The macOS app menu: the standard items plus "Check for Updates…" and
+//! "Settings…" (Cmd+,), which brings the window forward and opens the
+//! Settings dialog.
 
 use tauri::menu::{Menu, MenuItem, MenuItemKind, PredefinedMenuItem};
 use tauri::{AppHandle, Manager, Runtime};
 
 use crate::tray::{self, Locale};
+use crate::update;
 
 const SETTINGS_ID: &str = "settings";
 
@@ -16,7 +18,9 @@ struct AppMenu<R: Runtime> {
     settings: MenuItem<R>,
 }
 
-/// Replaces the default menu with one that has "Settings…" under the app menu.
+/// Replaces the default menu with one that has "Check for Updates…" and
+/// "Settings…" under the app menu. Clicks on the update item are answered by
+/// the menu bar menu's handler, which sees every menu event.
 ///
 /// # Errors
 /// When the menu or its items cannot be created.
@@ -33,6 +37,7 @@ pub fn install<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     if let Some(MenuItemKind::Submenu(app_menu)) = menu.items()?.into_iter().next() {
         app_menu.insert(&settings, 2)?;
         app_menu.insert(&PredefinedMenuItem::separator(app)?, 3)?;
+        app_menu.insert(&update::menu_item(app)?, 1)?;
     }
     app.set_menu(menu)?;
     app.on_menu_event(|app, event| {
